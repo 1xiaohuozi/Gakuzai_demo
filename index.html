@@ -27,6 +27,7 @@
       --se-lesson-height: calc(100vh - 252px);
       --mobile-nav-height: 64px;
       --mobile-nav-offset: 10px;
+      --vv-bottom-offset: 0px;
       --success: #16a34a;
       --danger: #dc2626;
       --warning: #d97706;
@@ -1129,7 +1130,7 @@
       position: fixed;
       left: 10px;
       right: 10px;
-      bottom: calc(var(--mobile-nav-offset) + env(safe-area-inset-bottom, 0px));
+      bottom: calc(var(--mobile-nav-offset) + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-offset));
       z-index: 1260;
 
       height: var(--mobile-nav-height);
@@ -1145,6 +1146,9 @@
       border: 1px solid rgba(148, 163, 184, .18);
       box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
       backdrop-filter: blur(18px);
+      transform: translateZ(0);
+      will-change: bottom;
+      backface-visibility: hidden;
 
       align-items: stretch;
     }
@@ -1181,7 +1185,7 @@
       position: fixed;
       left: 12px;
       right: 12px;
-      bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-offset) + 14px + env(safe-area-inset-bottom, 0px));
+      bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-offset) + 14px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-offset));
       z-index: 1270;
       display: none;
       align-items: center;
@@ -1192,7 +1196,10 @@
       background: rgba(15, 23, 42, .94);
       color: #fff;
       box-shadow: 0 18px 38px rgba(15, 23, 42, .24);
-      backdrop-filter: blur(16px)
+      backdrop-filter: blur(16px);
+      transform: translateZ(0);
+      will-change: bottom;
+      backface-visibility: hidden
     }
 
     .mobile-selection-bar__main {
@@ -1978,6 +1985,13 @@
           && window.matchMedia('(orientation: portrait)').matches
           && window.innerWidth <= TABLET_PORTRAIT_BREAKPOINT;
         return window.innerWidth <= MOBILE_BREAKPOINT || portraitTablet;
+      }
+      function syncViewportBottomOffset() {
+        const vv = window.visualViewport;
+        const bottomOffset = vv
+          ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+          : 0;
+        document.documentElement.style.setProperty('--vv-bottom-offset', `${Math.round(bottomOffset)}px`);
       }
       function isTouchMode() { return window.matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints || 0) > 0; }
       function showToast(msg, type = 'success') { const t = document.createElement('div'); t.className = `toast ${type === 'success' ? 'success' : type === 'warn' ? 'warn' : type === 'error' ? 'error' : ''}`; t.textContent = msg; els.toastWrap.appendChild(t); setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateY(8px)'; setTimeout(() => t.remove(), 220); }, 2600); }
@@ -2962,6 +2976,9 @@
         document.addEventListener('keydown', handleGlobalKeydown);
         window.addEventListener('resize', () => { if (!isMobileLayout()) { state.mobileOpen = false; state.mobileNavOpen = false; } syncMobileShell(); syncMobileNavShell(); syncKeywordPopoverToOwner(); });
         document.addEventListener('scroll', syncKeywordPopoverToOwner, true);
+        window.addEventListener('resize', syncViewportBottomOffset);
+        window.visualViewport?.addEventListener('resize', syncViewportBottomOffset);
+        window.visualViewport?.addEventListener('scroll', syncViewportBottomOffset);
 
         els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; renderToolbar(); });
         els.importJsonBtn.addEventListener('click', () => els.importJsonInput.click());
@@ -2995,6 +3012,7 @@
       }
 
       bindEvents();
+      syncViewportBottomOffset();
       initFromDraft();
       renderSavedList();
       setView('editor');

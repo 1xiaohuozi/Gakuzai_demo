@@ -284,6 +284,16 @@
       border: 1px solid rgba(239, 68, 68, .2)
     }
 
+    .editor-mode-btn {
+      min-width: 126px
+    }
+
+    .editor-mode-btn.is-active {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #fff;
+      box-shadow: 0 10px 18px rgba(15, 23, 42, .18)
+    }
+
     .sa-content.se-page {
       padding: 18px 22px 20px;
       display: grid;
@@ -365,6 +375,10 @@
       outline: none;
       border-color: rgba(59, 130, 246, .28);
       box-shadow: 0 0 0 4px rgba(59, 130, 246, .08), var(--se-shadow-lg)
+    }
+
+    .lesson-container.is-touch-processing {
+      caret-color: transparent
     }
 
     .lesson-container img {
@@ -1662,6 +1676,10 @@
         align-items: stretch
       }
 
+      .editor-mode-btn {
+        min-width: 0
+      }
+
       .se-lesson-picker {
         grid-column: 1 / -1;
         min-width: 0
@@ -1804,6 +1822,10 @@
         font-size: 10px
       }
 
+      .editor-mode-btn {
+        width: 100%
+      }
+
       .mobile-tool-nav {
         left: 8px;
         right: 8px;
@@ -1889,6 +1911,7 @@
           </label>
           <button id="loadLessonBtn" class="sa-btn se-btn--primary" type="button">読み込み</button>
           <button id="saveMaterialBtn" class="sa-btn se-btn--secondary" type="button">保存</button>
+          <button id="editorModeBtn" class="sa-btn sa-btn--ghost editor-mode-btn" type="button" hidden aria-pressed="false">本文編集</button>
         </div>
         <div class="saved-toolbar" id="savedTopActions" hidden>
           <div class="sv-search"><input id="savedSearchInput" class="sa-input sv-input" type="search"
@@ -2135,6 +2158,7 @@
         headerSubtitle: document.getElementById('headerSubtitle'),
         editorView: document.getElementById('editorView'),
         savedView: document.getElementById('savedView'),
+        editorModeBtn: document.getElementById('editorModeBtn'),
         savedList: document.getElementById('savedList'),
         savedCount: document.getElementById('savedCount'),
         savedHint: document.getElementById('savedHint'),
@@ -2183,6 +2207,7 @@
         redoStack: [],
         prefs: loadPrefs(),
         desktopSidebarCollapsed: loadSidebarCollapsed(),
+        mobileTextEditMode: false,
         sortMode: false,
         activeActionId: null,
         keywordDraft: '',
@@ -2219,6 +2244,22 @@
           ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
           : 0;
         document.documentElement.style.setProperty('--vv-bottom-offset', `${Math.round(bottomOffset)}px`);
+      }
+      function shouldUseProtectedEditMode() { return isTouchMode(); }
+      function isLessonTextEditable() { return !shouldUseProtectedEditMode() || state.mobileTextEditMode; }
+      function syncEditorInteractionMode() {
+        const protectedMode = shouldUseProtectedEditMode();
+        const editable = isLessonTextEditable();
+        els.lessonContainer.setAttribute('contenteditable', editable ? 'true' : 'false');
+        els.lessonContainer.classList.toggle('is-touch-processing', protectedMode && !editable);
+        if (!editable && document.activeElement === els.lessonContainer) els.lessonContainer.blur();
+        if (els.editorModeBtn) {
+          const showModeBtn = protectedMode && state.currentView === 'editor';
+          els.editorModeBtn.hidden = !showModeBtn;
+          els.editorModeBtn.classList.toggle('is-active', editable);
+          els.editorModeBtn.setAttribute('aria-pressed', String(editable));
+          els.editorModeBtn.textContent = editable ? '編集完了' : '本文編集';
+        }
       }
       function loadSidebarCollapsed() { try { return localStorage.getItem(STORAGE_KEYS.sidebar) === '1'; } catch { return false; } }
       function saveSidebarCollapsed(collapsed) { try { localStorage.setItem(STORAGE_KEYS.sidebar, collapsed ? '1' : '0'); } catch { } }
@@ -2487,6 +2528,7 @@
         if (view === 'saved') renderSavedList();
         closeKeywordPopover();
         closeMobileNav();
+        syncEditorInteractionMode();
       }
 
       function syncEditorStatusTag() { els.editorStatusTag.textContent = state.currentSavedId ? '保存済み教材を再編集中' : '本文編集エリア'; }
@@ -2713,7 +2755,7 @@
       function captureDraftInputs() { state.keywordDraft = els.toolbar.querySelector('#keywordText')?.value ?? state.keywordDraft; state.popupDraft = els.toolbar.querySelector('#popupText')?.value ?? state.popupDraft; }
       function clearDropState() { els.toolbar.querySelectorAll('.is-drop-target, .is-dragging').forEach(node => node.classList.remove('is-drop-target', 'is-dragging')); }
 
-      function triggerAction(actionId) { const keywordText = els.toolbar.querySelector('#keywordText')?.value?.trim() || ''; const popupText = els.toolbar.querySelector('#popupText')?.value?.trim() || ''; handleToolbarAction(actionId, { keywordText, popupText }); captureDraftInputs(); if (isMobileLayout()) closeMobilePanel(); }
+      function triggerAction(actionId) { const keywordText = els.toolbar.querySelector('#keywordText')?.value?.trim() || ''; const popupText = els.toolbar.querySelector('#popupText')?.value?.trim() || ''; if (shouldUseProtectedEditMode() && state.mobileTextEditMode) { state.mobileTextEditMode = false; syncEditorInteractionMode(); showToast('加工モードに戻りました。'); } handleToolbarAction(actionId, { keywordText, popupText }); captureDraftInputs(); if (isMobileLayout()) closeMobilePanel(); }
       function moveGroupByDelta(groupId, delta) { const idx = state.prefs.groupOrder.indexOf(groupId); state.prefs = normalizePrefs({ ...state.prefs, groupOrder: moveItemInArray(state.prefs.groupOrder, idx, delta) }); savePrefs(state.prefs); }
       function moveActionByDelta(actionId, delta) { const action = ACTION_MAP.get(actionId); if (!action) return; const list = state.prefs.itemOrder[action.groupId] || []; const idx = list.indexOf(actionId); state.prefs = normalizePrefs({ ...state.prefs, itemOrder: { ...state.prefs.itemOrder, [action.groupId]: moveItemInArray(list, idx, delta) } }); savePrefs(state.prefs); }
 
@@ -3225,6 +3267,20 @@
           saveSidebarCollapsed(state.desktopSidebarCollapsed);
           syncDesktopSidebarShell();
         });
+        els.editorModeBtn?.addEventListener('click', () => {
+          state.mobileTextEditMode = !state.mobileTextEditMode;
+          if (state.mobileTextEditMode) {
+            clearCurrentAction();
+            closeMobilePanel();
+          }
+          syncEditorInteractionMode();
+          if (state.mobileTextEditMode) {
+            requestAnimationFrame(() => els.lessonContainer.focus());
+            showToast('本文編集モードに切り替えました。');
+          } else {
+            showToast('加工モードに戻りました。');
+          }
+        });
         els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; renderToolbar(); });
         els.importJsonBtn.addEventListener('click', () => els.importJsonInput.click());
         els.importJsonInput.addEventListener('change', handleImportJsonChange);
@@ -3259,6 +3315,7 @@
       bindEvents();
       syncViewportBottomOffset();
       syncDesktopSidebarShell();
+      syncEditorInteractionMode();
       initFromDraft();
       renderSavedList();
       setView('editor');

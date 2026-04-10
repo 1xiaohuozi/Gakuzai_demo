@@ -778,7 +778,7 @@
       background: rgba(255, 250, 250, .7)
     }
 
- .keyword-toggle {
+    .keyword-toggle {
       background: #b22222;
       color: #fff;
       border: none;
@@ -787,57 +787,59 @@
       font-size: .72rem;
       cursor: pointer
     }
-.keyword-wrapper {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  border-radius: 6px;
-  border: 1px dashed #b22222;
-  background: rgba(255, 250, 250, .7);
-  vertical-align: baseline;
-}
 
-.keyword-toggle {
-  background: #b22222;
-  color: #fff;
-  border: none;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: .72rem;
-  cursor: pointer;
-  line-height: 1.2;
-}
+    .keyword-wrapper {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 4px;
+      border-radius: 6px;
+      border: 1px dashed #b22222;
+      background: rgba(255, 250, 250, .7);
+      vertical-align: baseline;
+    }
 
-.keyword-popover {
-  position: fixed;
-  z-index: 1600;
-  width: min(720px, calc(100vw - 24px));
-  max-height: min(56vh, 420px);
-  overflow: auto;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(178, 34, 34, .22);
-  background: rgba(255, 250, 250, .98);
-  box-shadow: 0 18px 38px rgba(15, 23, 42, .18);
-}
+    .keyword-toggle {
+      background: #b22222;
+      color: #fff;
+      border: none;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: .72rem;
+      cursor: pointer;
+      line-height: 1.2;
+    }
 
-.keyword-popover[hidden] {
-  display: none !important;
-}
+    .keyword-popover {
+      position: fixed;
+      z-index: 1600;
+      width: min(720px, calc(100vw - 24px));
+      max-height: min(56vh, 420px);
+      overflow: auto;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(178, 34, 34, .22);
+      background: rgba(255, 250, 250, .98);
+      box-shadow: 0 18px 38px rgba(15, 23, 42, .18);
+    }
 
-.keyword-popover img {
-  max-width: 100%;
-  height: auto;
-  display: block;
-  margin: 10px auto;
-  border-radius: 10px;
-}
+    .keyword-popover[hidden] {
+      display: none !important;
+    }
 
-.keyword-wrapper.is-open {
-  background: rgba(178, 34, 34, .08);
-  border-color: rgba(178, 34, 34, .36);
-}
+    .keyword-popover img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 10px auto;
+      border-radius: 10px;
+    }
+
+    .keyword-wrapper.is-open {
+      background: rgba(178, 34, 34, .08);
+      border-color: rgba(178, 34, 34, .36);
+    }
+
     .popup-anchor {
       position: relative;
       border-bottom: 1px dashed #b45309;
@@ -1772,7 +1774,7 @@
     </div>
   </div>
 
-    <div id="keywordPopover" class="keyword-popover" hidden></div>
+  <div id="keywordPopover" class="keyword-popover" hidden></div>
 
   <div class="toast-wrap" id="toastWrap"></div>
 
@@ -2243,161 +2245,161 @@
       function wrapAcrossTextNodes(container, range, builder) { const textNodes = []; const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, { acceptNode(node) { if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT; try { return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; } catch { return NodeFilter.FILTER_REJECT; } } }); while (walker.nextNode()) textNodes.push(walker.currentNode); for (let i = textNodes.length - 1; i >= 0; i--) { const tn = textNodes[i]; const len = tn.nodeValue.length; const start = (tn === range.startContainer) ? range.startOffset : 0; const end = (tn === range.endContainer) ? range.endOffset : len; if (start === end) continue; const r = document.createRange(); r.setStart(tn, start); r.setEnd(tn, end); const txt = r.toString(); if (!txt || !txt.trim()) continue; const frag = r.extractContents(); const wrapper = builder(frag); r.insertNode(wrapper); } try { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); range.collapse(false); } catch { } }
       function wrapSelectionSmart(container, builder) { const range = getActiveRange(container); if (!range) return null; const selectedText = range.toString(); if (!selectedText || !selectedText.trim()) return null; const startBlock = closestBlock(range.startContainer, container); const endBlock = closestBlock(range.endContainer, container); if (startBlock && endBlock && startBlock !== endBlock) { wrapAcrossTextNodes(container, range, builder); return true; } return wrapRangeInline(range, builder); }
       function applyKeyword(container, keywordText) {
-  const keyword = keywordText || '▽';
-  const range = getActiveRange(container);
-  if (!range) return;
+        const keyword = keywordText || '▽';
+        const range = getActiveRange(container);
+        if (!range) return;
 
-  const selectedText = range.toString();
-  if (!selectedText || !selectedText.trim()) return;
+        const selectedText = range.toString();
+        if (!selectedText || !selectedText.trim()) return;
 
-  let node = range.commonAncestorContainer;
-  if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
-  if (node && node.closest && node.closest('.keyword-wrapper')) return;
+        let node = range.commonAncestorContainer;
+        if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+        if (node && node.closest && node.closest('.keyword-wrapper')) return;
 
-  const wrappers = Array.from(container.querySelectorAll('.keyword-wrapper'));
-  for (const w of wrappers) {
-    try {
-      if (range.intersectsNode(w)) return;
-    } catch {}
-  }
+        const wrappers = Array.from(container.querySelectorAll('.keyword-wrapper'));
+        for (const w of wrappers) {
+          try {
+            if (range.intersectsNode(w)) return;
+          } catch { }
+        }
 
-  const startBlock = closestBlock(range.startContainer, container);
-  const endBlock = closestBlock(range.endContainer, container);
-  if (!startBlock || !endBlock) return;
+        const startBlock = closestBlock(range.startContainer, container);
+        const endBlock = closestBlock(range.endContainer, container);
+        if (!startBlock || !endBlock) return;
 
-  const originalHtml = fragmentToHTML(range.cloneContents());
-  const keywordId = `kw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const originalHtml = fragmentToHTML(range.cloneContents());
+        const keywordId = `kw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const createWrapper = () => {
-    const wrapper = document.createElement('span');
-    wrapper.className = 'keyword-wrapper';
-    wrapper.dataset.originalHtml = encodeURIComponent(originalHtml);
-    wrapper.dataset.keywordId = keywordId;
+        const createWrapper = () => {
+          const wrapper = document.createElement('span');
+          wrapper.className = 'keyword-wrapper';
+          wrapper.dataset.originalHtml = encodeURIComponent(originalHtml);
+          wrapper.dataset.keywordId = keywordId;
 
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'keyword-toggle';
-    toggle.textContent = keyword;
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.className = 'keyword-toggle';
+          toggle.textContent = keyword;
 
-    wrapper.append(toggle);
-    return wrapper;
-  };
+          wrapper.append(toggle);
+          return wrapper;
+        };
 
-  if (startBlock === endBlock) {
-    range.deleteContents();
-    const wrapper = createWrapper();
-    range.insertNode(wrapper);
+        if (startBlock === endBlock) {
+          range.deleteContents();
+          const wrapper = createWrapper();
+          range.insertNode(wrapper);
 
-    try {
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      const newRange = document.createRange();
-      newRange.setStartAfter(wrapper);
-      newRange.setEndAfter(wrapper);
-      sel.addRange(newRange);
-    } catch {}
+          try {
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            const newRange = document.createRange();
+            newRange.setStartAfter(wrapper);
+            newRange.setEndAfter(wrapper);
+            sel.addRange(newRange);
+          } catch { }
 
-    return;
-  }
+          return;
+        }
 
-  const blockNodes = [];
-  let walker = startBlock;
-  while (walker) {
-    blockNodes.push(walker);
-    if (walker === endBlock) break;
-    walker = walker.nextSibling;
-  }
-  if (!blockNodes.length || blockNodes[blockNodes.length - 1] !== endBlock) return;
-  const originalBlocks = blockNodes.map(block => block.outerHTML);
+        const blockNodes = [];
+        let walker = startBlock;
+        while (walker) {
+          blockNodes.push(walker);
+          if (walker === endBlock) break;
+          walker = walker.nextSibling;
+        }
+        if (!blockNodes.length || blockNodes[blockNodes.length - 1] !== endBlock) return;
+        const originalBlocks = blockNodes.map(block => block.outerHTML);
 
-  const beforeRange = document.createRange();
-  beforeRange.selectNodeContents(startBlock);
-  beforeRange.setEnd(range.startContainer, range.startOffset);
-  const beforeFrag = beforeRange.cloneContents();
+        const beforeRange = document.createRange();
+        beforeRange.selectNodeContents(startBlock);
+        beforeRange.setEnd(range.startContainer, range.startOffset);
+        const beforeFrag = beforeRange.cloneContents();
 
-  const afterRange = document.createRange();
-  afterRange.selectNodeContents(endBlock);
-  afterRange.setStart(range.endContainer, range.endOffset);
-  const afterFrag = afterRange.cloneContents();
+        const afterRange = document.createRange();
+        afterRange.selectNodeContents(endBlock);
+        afterRange.setStart(range.endContainer, range.endOffset);
+        const afterFrag = afterRange.cloneContents();
 
-  while (startBlock.firstChild) startBlock.removeChild(startBlock.firstChild);
-  startBlock.appendChild(beforeFrag);
-  const wrapper = createWrapper();
-  wrapper.dataset.crossBlock = '1';
-  wrapper.dataset.originalBlocks = encodeURIComponent(JSON.stringify(originalBlocks));
-  wrapper.dataset.endBlockTag = (endBlock.tagName || 'p').toLowerCase();
-  wrapper.dataset.endBlockAttrs = encodeURIComponent(JSON.stringify(
-    Array.from(endBlock.attributes || []).map(attr => [attr.name, attr.value])
-  ));
-  startBlock.appendChild(wrapper);
-  startBlock.appendChild(afterFrag);
+        while (startBlock.firstChild) startBlock.removeChild(startBlock.firstChild);
+        startBlock.appendChild(beforeFrag);
+        const wrapper = createWrapper();
+        wrapper.dataset.crossBlock = '1';
+        wrapper.dataset.originalBlocks = encodeURIComponent(JSON.stringify(originalBlocks));
+        wrapper.dataset.endBlockTag = (endBlock.tagName || 'p').toLowerCase();
+        wrapper.dataset.endBlockAttrs = encodeURIComponent(JSON.stringify(
+          Array.from(endBlock.attributes || []).map(attr => [attr.name, attr.value])
+        ));
+        startBlock.appendChild(wrapper);
+        startBlock.appendChild(afterFrag);
 
-  for (const block of blockNodes.slice(1)) {
-    block.remove();
-  }
+        for (const block of blockNodes.slice(1)) {
+          block.remove();
+        }
 
-  closeKeywordPopover();
+        closeKeywordPopover();
 
-  try {
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-  } catch {}
-}
+        try {
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+        } catch { }
+      }
       function applyColor(container, color) { wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.style.color = color; span.appendChild(frag); return span; }); }
       function applyMarker(container, color) { wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.style.backgroundColor = color; span.appendChild(frag); return span; }); }
       function applyEmphasis(container, type) { wrapSelectionSmart(container, frag => { const el = document.createElement(type === 'underline' ? 'u' : 'strong'); el.appendChild(frag); return el; }); }
       function applyFontSize(container, size) { wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.style.fontSize = size; span.appendChild(frag); return span; }); }
       function applyPopup(container, text) { if (!text) return; wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.className = 'popup-anchor'; span.dataset.popup = text; span.appendChild(frag); return span; }); }
       function clearSelectionStyle(container) {
-  const range = getActiveRange(container);
-  if (!range) return;
+        const range = getActiveRange(container);
+        if (!range) return;
 
-  const wrappers = Array.from(container.querySelectorAll('.keyword-wrapper'));
-  let handledKeyword = false;
+        const wrappers = Array.from(container.querySelectorAll('.keyword-wrapper'));
+        let handledKeyword = false;
 
-  wrappers.forEach(wrapper => {
-    try {
-      if (!range.intersectsNode(wrapper)) return;
+        wrappers.forEach(wrapper => {
+          try {
+            if (!range.intersectsNode(wrapper)) return;
 
-      const encodedHtml = wrapper.dataset.originalHtml;
-      const keywordId = wrapper.dataset.keywordId;
-      const ownerPopover = els.keywordPopover.dataset.owner;
+            const encodedHtml = wrapper.dataset.originalHtml;
+            const keywordId = wrapper.dataset.keywordId;
+            const ownerPopover = els.keywordPopover.dataset.owner;
 
-      if (ownerPopover && ownerPopover === keywordId) {
-        closeKeywordPopover();
-      }
+            if (ownerPopover && ownerPopover === keywordId) {
+              closeKeywordPopover();
+            }
 
-      if (wrapper.dataset.crossBlock === '1') {
-        const hostBlock = wrapper.closest(BLOCK_SELECTOR) || wrapper.parentElement;
-        if (!hostBlock) return;
+            if (wrapper.dataset.crossBlock === '1') {
+              const hostBlock = wrapper.closest(BLOCK_SELECTOR) || wrapper.parentElement;
+              if (!hostBlock) return;
 
-        const originalBlocks = JSON.parse(decodeURIComponent(wrapper.dataset.originalBlocks || '[]'));
-        if (Array.isArray(originalBlocks) && originalBlocks.length) {
-          const replacement = document.createDocumentFragment();
-          originalBlocks.forEach(html => replacement.appendChild(htmlToFragment(html)));
-          hostBlock.replaceWith(replacement);
-        } else {
-          const frag = htmlToFragment(decodeURIComponent(encodedHtml || ''));
-          wrapper.replaceWith(frag);
+              const originalBlocks = JSON.parse(decodeURIComponent(wrapper.dataset.originalBlocks || '[]'));
+              if (Array.isArray(originalBlocks) && originalBlocks.length) {
+                const replacement = document.createDocumentFragment();
+                originalBlocks.forEach(html => replacement.appendChild(htmlToFragment(html)));
+                hostBlock.replaceWith(replacement);
+              } else {
+                const frag = htmlToFragment(decodeURIComponent(encodedHtml || ''));
+                wrapper.replaceWith(frag);
+              }
+            } else {
+              const frag = htmlToFragment(decodeURIComponent(encodedHtml || ''));
+              wrapper.replaceWith(frag);
+            }
+
+            handledKeyword = true;
+          } catch { }
+        });
+
+        if (handledKeyword) {
+          saveDraft();
+          return;
         }
-      } else {
-        const frag = htmlToFragment(decodeURIComponent(encodedHtml || ''));
-        wrapper.replaceWith(frag);
+
+        const extracted = range.extractContents();
+        const sanitized = sanitizeClearedFragment(extracted);
+        range.insertNode(sanitized);
       }
-
-      handledKeyword = true;
-    } catch {}
-  });
-
-  if (handledKeyword) {
-    saveDraft();
-    return;
-  }
-
-  const extracted = range.extractContents();
-  const sanitized = sanitizeClearedFragment(extracted);
-  range.insertNode(sanitized);
-}
 
 
       function getSelectionInfo() { const sel = window.getSelection(); if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null; const range = sel.getRangeAt(0); const text = sel.toString(); let blockId = null, blockText = null, startOffset = null; let node = range.commonAncestorContainer; if (node.nodeType === Node.TEXT_NODE) node = node.parentElement; const blockEl = node.closest?.('[data-block-id]') || node.closest?.('p, h1, h2, h3, li, blockquote, pre') || null; if (blockEl) { blockId = blockEl.dataset.blockId || null; blockText = blockEl.textContent || ''; const idx = blockText.indexOf(text); startOffset = idx !== -1 ? idx : range.startOffset; } if (!blockId) blockId = 'unknown'; return { text, blockId, blockText, startOffset }; }
@@ -2597,26 +2599,26 @@
         els.savedSearchInput.addEventListener('input', renderSavedList); els.savedSortSelect.addEventListener('change', renderSavedList);
         els.savedList.addEventListener('click', event => { const btn = event.target.closest('[data-saved-action]'); if (!btn) return; const id = btn.dataset.id; const action = btn.dataset.savedAction; if (action === 'open') openSavedItem(id); if (action === 'delete') deleteSavedItem(id); if (action === 'export') exportSavedItem(id); if (action === 'preview') previewSavedItem(id); });
         els.lessonContainer.addEventListener('click', e => {
-  const btn = e.target.closest('.keyword-toggle');
-  if (btn) {
-    e.preventDefault();
-    e.stopPropagation();
-    const wrapper = btn.closest('.keyword-wrapper');
-    if (!wrapper) return;
-    const isSame = els.keywordPopover.dataset.owner && els.keywordPopover.dataset.owner === (wrapper.dataset.keywordId || '');
-    if (!els.keywordPopover.hidden && isSame) {
-      closeKeywordPopover();
-    } else {
-      openKeywordPopover(wrapper);
-    }
-    saveDraft();
-    return;
-  }
+          const btn = e.target.closest('.keyword-toggle');
+          if (btn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const wrapper = btn.closest('.keyword-wrapper');
+            if (!wrapper) return;
+            const isSame = els.keywordPopover.dataset.owner && els.keywordPopover.dataset.owner === (wrapper.dataset.keywordId || '');
+            if (!els.keywordPopover.hidden && isSame) {
+              closeKeywordPopover();
+            } else {
+              openKeywordPopover(wrapper);
+            }
+            saveDraft();
+            return;
+          }
 
-  if (!isContainedIn(e.target, els.keywordPopover)) {
-    closeKeywordPopover();
-  }
-});
+          if (!isContainedIn(e.target, els.keywordPopover)) {
+            closeKeywordPopover();
+          }
+        });
         els.lessonContainer.addEventListener('mouseup', e => { if (isTouchMode()) return; if (e.target.closest('.keyword-toggle')) return; if (!state.currentAction) return; const sel = window.getSelection(); if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return; applyCurrentActionToSelection(); sel.removeAllRanges(); });
         els.lessonContainer.addEventListener('beforeinput', e => { if (e.inputType === 'historyUndo') { e.preventDefault(); if (state.__historyHotkeyLock) return; undo(); } if (e.inputType === 'historyRedo') { e.preventDefault(); if (state.__historyHotkeyLock) return; redo(); } }, { capture: true });
         els.lessonContainer.addEventListener('input', () => { state.draftChangedAt = nowIso(); saveDraft(); });

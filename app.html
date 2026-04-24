@@ -1,0 +1,230 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GAKUZAI</title>
+  <link rel="stylesheet" href="./assets/styles/main.css" />
+</head>
+
+<body data-require-auth="true">
+  <div class="sa-layout se-layout">
+    <aside class="sa-sidebar se-sidebar" aria-label="デスクトップナビゲーション">
+      <div class="sa-brand">
+        <div class="sa-logo">GAKUZAI</div>
+      </div>
+      <div class="sidebar-user-card" id="authPanel">
+        <div class="sidebar-user-card__label">USER</div>
+        <div class="sidebar-user-card__name" id="authStatus">ログイン確認中</div>
+      </div>
+      <button id="sidebarToggleBtn" class="sidebar-toggle-btn" type="button" aria-expanded="true"
+        aria-label="サイドバーを折りたたむ">
+        <span class="sidebar-toggle-btn__icon">⇤</span>
+        <span class="sidebar-toggle-btn__label">サイドバーを折りたたむ</span>
+      </button>
+      <nav class="sa-nav">
+        <button class="sa-navbtn active" data-view="editor" data-short="加工" aria-label="加工教材">加工教材</button>
+        <button class="sa-navbtn" data-view="saved" data-short="保存" aria-label="保存済み教材">保存済み教材</button>
+      </nav>
+      <button id="logoutBtn" class="sa-navbtn sa-navbtn--danger" type="button" data-short="退出"
+        aria-label="ログアウト">ログアウト</button>
+    </aside>
+
+    <dialog id="mobileNavDialog" class="mobile-nav-dialog" aria-label="モバイルナビゲーション">
+      <div id="mobileNavDrawer" class="mobile-nav-drawer">
+        <div class="mobile-nav-drawer__head">
+          <div>
+            <div class="mobile-nav-drawer__logo">GAKUZAI</div>
+            <div class="mobile-nav-drawer__user" id="mobileAuthStatus">ログイン確認中</div>
+          </div>
+          <button id="mobileNavCloseBtn" class="mobile-nav-drawer__close" type="button" aria-label="メニューを閉じる">✕</button>
+        </div>
+        <nav class="mobile-nav-drawer__nav">
+          <button class="mobile-nav-drawer__link active" data-view="editor">加工教材</button>
+          <button class="mobile-nav-drawer__link" data-view="saved">保存済み教材</button>
+        </nav>
+        <button id="mobileLogoutBtn" class="mobile-nav-drawer__logout" type="button">ログアウト</button>
+      </div>
+    </dialog>
+
+    <main class="sa-main se-main">
+      <header class="sa-header se-header">
+        <div class="se-header__topline mobile-only" aria-hidden="true">
+          <button id="mobileNavOpenBtn" class="mobile-nav-open" type="button" aria-label="メニューを開く">☰</button>
+        </div>
+        <div class="se-header__intro">
+          <h1 class="se-title" id="headerTitle">加工教材</h1>
+          <p class="se-header__subtitle" id="headerSubtitle">
+            ログイン中のユーザーごとに教材加工データと編集ツール設定を保存します。</p>
+        </div>
+        <div class="sa-actions se-actions" id="editorTopActions">
+          <label class="se-lesson-picker" aria-label="教材選択">
+            <span class="se-lesson-picker__label">教材選択</span>
+            <select id="lessonSelect" class="sa-select"></select>
+          </label>
+          <button id="loadLessonBtn" class="sa-btn se-btn--primary" type="button">読み込み</button>
+          <button id="saveMaterialBtn" class="sa-btn se-btn--secondary" type="button">保存</button>
+          <button id="editorModeBtn" class="sa-btn sa-btn--ghost editor-mode-btn" type="button" hidden
+            aria-pressed="false">本文編集</button>
+        </div>
+        <div class="saved-toolbar" id="savedTopActions" hidden>
+          <div class="sv-search"><input id="savedSearchInput" class="sa-input sv-input" type="search"
+              placeholder="タイトルで検索…"></div>
+          <label class="se-lesson-picker" style="min-width:180px">
+            <span class="se-lesson-picker__label">並び順</span>
+            <select id="savedSortSelect" class="sa-select">
+              <option value="updated_desc">更新日（新しい順）</option>
+              <option value="updated_asc">更新日（古い順）</option>
+              <option value="created_desc">作成日（新しい順）</option>
+              <option value="created_asc">作成日（古い順）</option>
+              <option value="title_asc">タイトル（A→Z）</option>
+              <option value="title_desc">タイトル（Z→A）</option>
+            </select>
+          </label>
+          <button id="importJsonBtn" class="sa-btn sa-btn--ghost" type="button">JSON取込</button>
+          <input id="importJsonInput" type="file" accept="application/json" hidden>
+        </div>
+      </header>
+
+      <section class="sa-content se-page" id="editorView">
+        <div class="se-workspace">
+          <section class="lesson-shell">
+            <div class="lesson-header card-shell">
+              <div class="lesson-heading">
+                <div class="lesson-heading__label">現在の教材</div>
+                <h2 class="lesson-title" id="lesson-title-display">なし</h2>
+                <p class="lesson-heading__hint">必要なツールを選んでから、加工したい語句だけをドラッグしてください。ESC でモード解除、Ctrl/Cmd+Z
+                  で元に戻す、Ctrl/Cmd+Shift+Z または Y でやり直し。</p>
+              </div>
+              <div class="lesson-heading__tag" id="editorStatusTag">本文編集エリア</div>
+            </div>
+            <main id="lesson-container" class="lesson-container" aria-label="編集領域" contenteditable="true"></main>
+          </section>
+
+          <aside class="tool-panel card-shell" aria-label="編集ツール" id="toolPanel">
+            <div class="tool-panel__header">
+              <div>
+                <div class="tool-panel__eyebrow">TOOL BOX</div>
+                <div class="tool-panel__title">編集ツール</div>
+                <div class="tool-panel__desc">PCとタブレット横向きでは右側固定、スマホとタブレット縦向きでは下から開いて使用します。並べ替えはユーザー設定として保存されます。</div>
+              </div>
+              <div class="tool-panel__header-actions">
+                <button id="toolbarPrefsBtn" class="toolbar-toggle-btn" type="button" aria-expanded="false">
+                  <span>⇅</span><span>並べ替え</span><span class="toolbar-toggle-btn__state">OFF</span><span
+                    class="toolbar-toggle-btn__arrow"></span>
+                </button>
+                <button id="mobileToolCloseBtn" class="mobile-tool-close" type="button"
+                  aria-label="ツールを閉じる">閉じる</button>
+              </div>
+            </div>
+            <div id="toolbar" class="toolbar"></div>
+            <p id="hint" class="hint">ツールを選択してから、本文中の語句をドラッグしてください。</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="sa-content se-page" id="savedView" hidden>
+        <section class="saved-shell">
+          <div class="lesson-header card-shell">
+            <div class="lesson-heading">
+              <div class="lesson-heading__label">DATABASE</div>
+              <h2 class="lesson-title">保存済み教材</h2>
+              <p class="lesson-heading__hint">ログイン中のユーザーが保存した教材をデータベースから読み込みます。</p>
+            </div>
+            <div class="pill"><span id="savedCount">0</span> 件</div>
+          </div>
+          <div id="savedList" class="sv-grid"></div>
+          <div id="savedEmpty" class="sv-empty" hidden>
+            <div class="sv-empty__icon">📚</div>
+            <h2>まだ保存済み教材がありません</h2>
+            <p>「加工教材」から編集し、「保存」でここに追加されます。</p>
+            <button class="sa-btn" type="button" data-view="editor">加工教材へ</button>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="mobileToolBackdrop" class="mobile-tool-backdrop" hidden></div>
+  <nav class="mobile-tool-nav" aria-label="モバイルツール切り替え">
+    <button type="button" class="mobile-tool-nav__btn" data-mobile-tool="conceal">隠す</button>
+    <button type="button" class="mobile-tool-nav__btn" data-mobile-tool="text-color">色</button>
+    <button type="button" class="mobile-tool-nav__btn" data-mobile-tool="marker">マーカー</button>
+    <button type="button" class="mobile-tool-nav__btn" data-mobile-tool="emphasis">強調</button>
+    <button type="button" class="mobile-tool-nav__btn" data-mobile-tool="all">ツール</button>
+  </nav>
+
+  <div id="mobileSelectionBar" class="mobile-selection-bar" hidden aria-live="polite">
+    <div class="mobile-selection-bar__main">
+      <div class="mobile-selection-bar__eyebrow">TOUCH APPLY</div>
+      <div id="mobileSelectionLabel" class="mobile-selection-bar__label">選択した範囲に適用できます</div>
+    </div>
+    <div class="mobile-selection-bar__actions">
+      <button id="mobileSelectionCancelBtn" class="mobile-selection-bar__btn mobile-selection-bar__btn--ghost"
+        type="button">取消</button>
+      <button id="mobileSelectionApplyBtn" class="mobile-selection-bar__btn mobile-selection-bar__btn--primary"
+        type="button">適用</button>
+    </div>
+  </div>
+
+  <div id="previewDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
+    <div class="dialog">
+      <div class="dialog__head">
+        <div>
+          <h3 class="dialog__title">保存済み教材プレビュー</h3>
+          <div class="form-label" id="previewMeta"></div>
+        </div>
+        <button id="closePreviewBtn" class="sa-btn sa-btn--ghost" type="button">閉じる</button>
+      </div>
+      <div class="dialog__content">
+        <div id="previewContent" class="lesson-container" style="height:auto;max-height:60vh;min-height:220px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="saveDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
+    <div class="dialog app-modal app-modal--narrow">
+      <div class="dialog__head">
+        <div>
+          <h3 class="dialog__title">教材を保存</h3>
+          <div class="form-label">保存名を入力してください</div>
+        </div>
+      </div>
+      <div class="dialog__content">
+        <label class="form-field">
+          <span class="form-label">タイトル</span>
+          <input id="saveTitleInput" class="sa-input" type="text" maxlength="80">
+        </label>
+        <p id="saveTitleError" class="form-error" hidden></p>
+      </div>
+      <div class="dialog__actions">
+        <button id="cancelSaveBtn" class="sa-btn sa-btn--ghost" type="button">キャンセル</button>
+        <button id="confirmSaveBtn" class="sa-btn se-btn--primary" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
+    <div class="dialog app-modal app-modal--narrow">
+      <div class="dialog__head">
+        <div>
+          <h3 id="confirmDialogTitle" class="dialog__title">確認</h3>
+          <div id="confirmDialogMessage" class="form-label"></div>
+        </div>
+      </div>
+      <div class="dialog__actions">
+        <button id="cancelConfirmBtn" class="sa-btn sa-btn--ghost" type="button">キャンセル</button>
+        <button id="confirmActionBtn" class="sa-btn sa-btn--danger" type="button">削除</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="keywordPopover" class="keyword-popover" hidden></div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <script src="./assets/scripts/sample-lessons.js"></script>
+  <script src="./assets/scripts/app.js"></script>
+</body>
+</html>

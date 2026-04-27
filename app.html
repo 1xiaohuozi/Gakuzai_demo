@@ -24,8 +24,16 @@
         <span class="sidebar-toggle-btn__label">サイドバーを折りたたむ</span>
       </button>
       <nav class="sa-nav">
-        <button class="sa-navbtn active" data-view="editor" data-short="加工" aria-label="加工教材">加工教材</button>
-        <button class="sa-navbtn" data-view="saved" data-short="保存" aria-label="保存済み教材">保存済み教材</button>
+        <button class="sa-navbtn active" data-role-nav="student teacher" data-view="courses" data-short="授業"
+          aria-label="授業一覧">授業一覧</button>
+        <button class="sa-navbtn" data-role-nav="student" data-view="editor" data-short="加工"
+          aria-label="教材加工">教材加工</button>
+        <button class="sa-navbtn" data-role-nav="teacher" data-view="materials" data-short="教材"
+          aria-label="教材管理">教材管理</button>
+        <button class="sa-navbtn" data-role-nav="student" data-view="saved" data-short="記録"
+          aria-label="学習記録">学習記録</button>
+        <button class="sa-navbtn" data-role-nav="admin" data-view="admin" data-short="管理"
+          aria-label="管理者コンソール">管理者コンソール</button>
       </nav>
       <button id="logoutBtn" class="sa-navbtn sa-navbtn--danger" type="button" data-short="退出"
         aria-label="ログアウト">ログアウト</button>
@@ -41,8 +49,11 @@
           <button id="mobileNavCloseBtn" class="mobile-nav-drawer__close" type="button" aria-label="メニューを閉じる">✕</button>
         </div>
         <nav class="mobile-nav-drawer__nav">
-          <button class="mobile-nav-drawer__link active" data-view="editor">加工教材</button>
-          <button class="mobile-nav-drawer__link" data-view="saved">保存済み教材</button>
+          <button class="mobile-nav-drawer__link active" data-role-nav="student teacher" data-view="courses">授業一覧</button>
+          <button class="mobile-nav-drawer__link" data-role-nav="student" data-view="editor">教材加工</button>
+          <button class="mobile-nav-drawer__link" data-role-nav="teacher" data-view="materials">教材管理</button>
+          <button class="mobile-nav-drawer__link" data-role-nav="student" data-view="saved">学習記録</button>
+          <button class="mobile-nav-drawer__link" data-role-nav="admin" data-view="admin">管理者コンソール</button>
         </nav>
         <button id="mobileLogoutBtn" class="mobile-nav-drawer__logout" type="button">ログアウト</button>
       </div>
@@ -59,8 +70,12 @@
             ログイン中のユーザーごとに教材加工データと編集ツール設定を保存します。</p>
         </div>
         <div class="sa-actions se-actions" id="editorTopActions">
+          <label class="se-lesson-picker" id="courseSelectWrap" aria-label="授業選択" hidden>
+            <span class="se-lesson-picker__label">授業</span>
+            <select id="courseSelect" class="sa-select"></select>
+          </label>
           <label class="se-lesson-picker" aria-label="教材選択">
-            <span class="se-lesson-picker__label">教材選択</span>
+            <span class="se-lesson-picker__label" id="lessonSelectLabel">教材選択</span>
             <select id="lessonSelect" class="sa-select"></select>
           </label>
           <button id="loadLessonBtn" class="sa-btn se-btn--primary" type="button">読み込み</button>
@@ -86,6 +101,43 @@
           <input id="importJsonInput" type="file" accept="application/json" hidden>
         </div>
       </header>
+
+      <section class="sa-content se-page app-list-page" id="coursesView" hidden>
+        <section class="lesson-shell">
+          <div class="lesson-header card-shell">
+            <div class="lesson-heading">
+              <div class="lesson-heading__label">COURSES</div>
+              <h2 class="lesson-title" id="coursesTitle">授業一覧</h2>
+              <p class="lesson-heading__hint" id="coursesHint">授業コードで参加するか、教師として授業を作成します。</p>
+            </div>
+          </div>
+          <div id="dashboardSummary" class="app-stat-grid"></div>
+          <div id="courseJoinPanel" class="course-panel card-shell">
+            <label class="form-field">
+              <span class="form-label">授業コード</span>
+              <input id="inviteCodeInput" class="sa-input" type="text" placeholder="教師から受け取った授業コードを入力">
+            </label>
+            <button id="joinCourseBtn" class="sa-btn se-btn--primary" type="button">授業に参加</button>
+          </div>
+          <div id="courseCreatePanel" class="course-panel card-shell" hidden>
+            <label class="form-field">
+              <span class="form-label">授業名</span>
+              <input id="courseNameInput" class="sa-input" type="text" maxlength="80">
+            </label>
+            <label class="form-field">
+              <span class="form-label">学期</span>
+              <input id="courseSemesterInput" class="sa-input" type="text" maxlength="40">
+            </label>
+            <label class="form-field course-panel__wide">
+              <span class="form-label">説明</span>
+              <textarea id="courseDescriptionInput" class="sa-textarea" rows="2"></textarea>
+            </label>
+            <button id="createCourseBtn" class="sa-btn se-btn--primary" type="button">授業を作成</button>
+          </div>
+          <div id="courseList" class="sv-grid"></div>
+          <div id="courseWorkspace" class="app-workspace-grid"></div>
+        </section>
+      </section>
 
       <section class="sa-content se-page" id="editorView">
         <div class="se-workspace">
@@ -129,18 +181,53 @@
           <div class="lesson-header card-shell">
             <div class="lesson-heading">
               <div class="lesson-heading__label">DATABASE</div>
-              <h2 class="lesson-title">保存済み教材</h2>
-              <p class="lesson-heading__hint">ログイン中のユーザーが保存した教材をデータベースから読み込みます。</p>
+              <h2 class="lesson-title">学習記録</h2>
+              <p class="lesson-heading__hint">自分が保存した加工結果を授業単位で一覧し、途中から再開できます。</p>
             </div>
             <div class="pill"><span id="savedCount">0</span> 件</div>
           </div>
           <div id="savedList" class="sv-grid"></div>
           <div id="savedEmpty" class="sv-empty" hidden>
             <div class="sv-empty__icon">📚</div>
-            <h2>まだ保存済み教材がありません</h2>
-            <p>「加工教材」から編集し、「保存」でここに追加されます。</p>
-            <button class="sa-btn" type="button" data-view="editor">加工教材へ</button>
+            <h2>まだ学習記録がありません</h2>
+            <p>授業教材を開いて保存すると、ここに自分の加工結果が蓄積されます。</p>
+            <button class="sa-btn" type="button" data-view="courses">授業一覧へ</button>
           </div>
+        </section>
+      </section>
+
+      <section class="sa-content se-page app-list-page" id="materialsView" hidden>
+        <section class="lesson-shell">
+          <div class="lesson-header card-shell">
+            <div class="lesson-heading">
+              <div class="lesson-heading__label">MATERIALS</div>
+              <h2 class="lesson-title">教材管理</h2>
+              <p class="lesson-heading__hint">現在の授業を基準に、教材の作成・編集・公開と学生の作業確認を行います。</p>
+            </div>
+          </div>
+          <div id="materialsSummary" class="app-stat-grid"></div>
+          <div id="teacherMaterialList" class="sv-grid"></div>
+          <div class="lesson-header card-shell" style="margin-top:20px">
+            <div class="lesson-heading">
+              <div class="lesson-heading__label">STUDENT WORKS</div>
+              <h2 class="lesson-title">学生の作業一覧</h2>
+              <p class="lesson-heading__hint">教材管理の中で、選択した教材に対する学生の保存状況を確認します。</p>
+            </div>
+          </div>
+          <div id="workList" class="sv-grid"></div>
+        </section>
+      </section>
+
+      <section class="sa-content se-page app-list-page" id="adminView" hidden>
+        <section class="lesson-shell">
+          <div class="lesson-header card-shell">
+            <div class="lesson-heading">
+              <div class="lesson-heading__label">ADMIN</div>
+              <h2 class="lesson-title">管理者コンソール</h2>
+              <p class="lesson-heading__hint">ユーザー管理、権限管理、授業管理、システム設定の入口を用意しています。</p>
+            </div>
+          </div>
+          <div id="adminPanel" class="sv-grid"></div>
         </section>
       </section>
     </main>
@@ -201,6 +288,36 @@
       <div class="dialog__actions">
         <button id="cancelSaveBtn" class="sa-btn sa-btn--ghost" type="button">キャンセル</button>
         <button id="confirmSaveBtn" class="sa-btn se-btn--primary" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="courseDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
+    <div class="dialog app-modal app-modal--narrow">
+      <div class="dialog__head">
+        <div>
+          <h3 id="courseDialogTitle" class="dialog__title">授業を作成</h3>
+          <div class="form-label">授業情報を入力してください</div>
+        </div>
+      </div>
+      <div class="dialog__content">
+        <label class="form-field">
+          <span class="form-label">授業名</span>
+          <input id="courseDialogNameInput" class="sa-input" type="text" maxlength="80">
+        </label>
+        <label class="form-field">
+          <span class="form-label">学期</span>
+          <input id="courseDialogSemesterInput" class="sa-input" type="text" maxlength="40">
+        </label>
+        <label class="form-field">
+          <span class="form-label">説明</span>
+          <textarea id="courseDialogDescriptionInput" class="sa-textarea" rows="3"></textarea>
+        </label>
+        <p id="courseDialogError" class="form-error" hidden></p>
+      </div>
+      <div class="dialog__actions">
+        <button id="cancelCourseDialogBtn" class="sa-btn sa-btn--ghost" type="button">キャンセル</button>
+        <button id="confirmCourseDialogBtn" class="sa-btn se-btn--primary" type="button">保存</button>
       </div>
     </div>
   </div>

@@ -40,7 +40,8 @@ function publicUser(row) {
   return {
     id: row.id,
     email: row.email,
-    displayName: row.display_name || ''
+    displayName: row.display_name || '',
+    role: row.role || 'student'
   };
 }
 
@@ -77,11 +78,11 @@ router.post('/register', async (req, res) => {
 
   const passwordHash = await bcrypt.hash(password, 12);
   const result = db.prepare(
-    'INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)'
-  ).run(email, passwordHash, displayName || null);
+    'INSERT INTO users (email, password_hash, display_name, role) VALUES (?, ?, ?, ?)'
+  ).run(email, passwordHash, displayName || null, 'student');
 
   const user = db.prepare(
-    'SELECT id, email, display_name FROM users WHERE id = ?'
+    'SELECT id, email, display_name, role FROM users WHERE id = ?'
   ).get(result.lastInsertRowid);
 
   logUserEvent(user.id, 'auth_register', { email: user.email });
@@ -100,7 +101,7 @@ router.post('/login', async (req, res) => {
   if (blockIfLocked(failureRecord, res)) return;
 
   const user = db.prepare(
-    'SELECT id, email, password_hash, display_name FROM users WHERE email = ?'
+    'SELECT id, email, password_hash, display_name, role FROM users WHERE email = ?'
   ).get(email);
 
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
@@ -123,7 +124,7 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', requireAuth, (req, res) => {
   const user = db.prepare(
-    'SELECT id, email, display_name FROM users WHERE id = ?'
+    'SELECT id, email, display_name, role FROM users WHERE id = ?'
   ).get(req.user.id);
 
   if (!user) {

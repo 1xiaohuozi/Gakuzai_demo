@@ -49,6 +49,8 @@
       // 起動時に主要な DOM をまとめて参照しておく。
       const els = {
         body: document.body,
+        courseSelectWrap: document.getElementById('courseSelectWrap'),
+        courseSelect: document.getElementById('courseSelect'),
         lessonSelect: document.getElementById('lessonSelect'),
         lessonContainer: document.getElementById('lesson-container'),
         titleDisplay: document.getElementById('lesson-title-display'),
@@ -58,8 +60,12 @@
         loadBtn: document.getElementById('loadLessonBtn'),
         headerTitle: document.getElementById('headerTitle'),
         headerSubtitle: document.getElementById('headerSubtitle'),
+        lessonSelectLabel: document.getElementById('lessonSelectLabel'),
         editorView: document.getElementById('editorView'),
         savedView: document.getElementById('savedView'),
+        coursesView: document.getElementById('coursesView'),
+        materialsView: document.getElementById('materialsView'),
+        adminView: document.getElementById('adminView'),
         editorModeBtn: document.getElementById('editorModeBtn'),
         savedList: document.getElementById('savedList'),
         savedCount: document.getElementById('savedCount'),
@@ -72,6 +78,7 @@
         sidebarToggleBtn: document.getElementById('sidebarToggleBtn'),
         toolbarPrefsBtn: document.getElementById('toolbarPrefsBtn'),
         mobileToolBackdrop: document.getElementById('mobileToolBackdrop'),
+        mobileToolNav: document.querySelector('.mobile-tool-nav'),
         mobileToolCloseBtn: document.getElementById('mobileToolCloseBtn'),
         mobileNavDialog: document.getElementById('mobileNavDialog'),
         mobileNavDrawer: document.getElementById('mobileNavDrawer'),
@@ -99,6 +106,29 @@
         keywordPopover: document.getElementById('keywordPopover'),
         importJsonBtn: document.getElementById('importJsonBtn'),
         importJsonInput: document.getElementById('importJsonInput'),
+        inviteCodeInput: document.getElementById('inviteCodeInput'),
+        joinCourseBtn: document.getElementById('joinCourseBtn'),
+        courseJoinPanel: document.getElementById('courseJoinPanel'),
+        courseCreatePanel: document.getElementById('courseCreatePanel'),
+        courseNameInput: document.getElementById('courseNameInput'),
+        courseSemesterInput: document.getElementById('courseSemesterInput'),
+        courseDescriptionInput: document.getElementById('courseDescriptionInput'),
+        createCourseBtn: document.getElementById('createCourseBtn'),
+        courseList: document.getElementById('courseList'),
+        dashboardSummary: document.getElementById('dashboardSummary'),
+        courseWorkspace: document.getElementById('courseWorkspace'),
+        courseDialogBackdrop: document.getElementById('courseDialogBackdrop'),
+        courseDialogTitle: document.getElementById('courseDialogTitle'),
+        courseDialogNameInput: document.getElementById('courseDialogNameInput'),
+        courseDialogSemesterInput: document.getElementById('courseDialogSemesterInput'),
+        courseDialogDescriptionInput: document.getElementById('courseDialogDescriptionInput'),
+        courseDialogError: document.getElementById('courseDialogError'),
+        confirmCourseDialogBtn: document.getElementById('confirmCourseDialogBtn'),
+        cancelCourseDialogBtn: document.getElementById('cancelCourseDialogBtn'),
+        materialsSummary: document.getElementById('materialsSummary'),
+        teacherMaterialList: document.getElementById('teacherMaterialList'),
+        workList: document.getElementById('workList'),
+        adminPanel: document.getElementById('adminPanel'),
         exportAllBtn: document.getElementById('exportAllBtn'),
         mobileExportBtn: document.getElementById('mobileExportBtn'),
         resetDemoBtn: document.getElementById('resetDemoBtn'),
@@ -132,6 +162,7 @@
         desktopSidebarCollapsed: loadSidebarCollapsed(),
         mobileTextEditMode: false,
         sortMode: false,
+        sortSelection: null,
         activeActionId: null,
         keywordDraft: '',
         popupDraft: '',
@@ -140,6 +171,7 @@
         mobileNavOpen: false,
         activeMobileTool: 'all',
         dragState: null,
+        touchSortState: null,
         touchApplyTimer: null,
         lastTouchRange: null,
         lastTouchSelectionKey: '',
@@ -149,6 +181,10 @@
         draftChangedAt: null,
         authToken: localStorage.getItem(STORAGE_KEYS.authToken) || '',
         currentUser: null,
+        coursesCache: [],
+        courseMaterialsCache: [],
+        currentCourseId: null,
+        editingCourseId: null,
         savesCache: [],
         saveDialogResolver: null,
         confirmDialogResolver: null
@@ -221,11 +257,17 @@
       }
       function syncAuthUi() {
         const loggedIn = !!state.currentUser;
-        const label = loggedIn ? (state.currentUser.displayName || state.currentUser.email) : '未ログイン';
+        const role = state.currentUser?.role || 'student';
+        document.body.dataset.role = loggedIn ? role : 'guest';
+        const label = loggedIn ? `${state.currentUser.displayName || state.currentUser.email} / ${role}` : '未ログイン';
         if (els.authStatus) els.authStatus.textContent = label;
         if (els.mobileAuthStatus) els.mobileAuthStatus.textContent = label;
         if (els.authForm) els.authForm.hidden = loggedIn;
         if (els.logoutBtn) els.logoutBtn.hidden = !loggedIn;
+        document.querySelectorAll('[data-role-nav]').forEach(node => {
+          const allowed = (node.dataset.roleNav || '').split(/\s+/).includes(role);
+          node.hidden = loggedIn && !allowed;
+        });
       }
       async function apiRequest(path, options = {}) {
         const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -245,10 +287,572 @@
           renderSavedList();
           return [];
         }
-        const data = await apiRequest('/api/materials');
+        const role = state.currentUser.role || 'student';
+        const path = role === 'student'
+          ? '/api/materials'
+          : state.currentCourseId
+            ? `/api/materials?courseId=${encodeURIComponent(state.currentCourseId)}`
+            : '/api/materials';
+        const data = await apiRequest(path);
         state.savesCache = data.materials || [];
+        state.courseMaterialsCache = data.materials || [];
         renderSavedList();
         return state.savesCache;
+      }
+      async function refreshCourses() {
+        if (!state.currentUser) return [];
+        const data = await apiRequest('/api/courses');
+        state.coursesCache = data.courses || [];
+        if (!state.currentCourseId && state.coursesCache.length) state.currentCourseId = state.coursesCache[0].id;
+        renderCourseList();
+        renderLessonSelect();
+        if (state.currentCourseId) await refreshCourseMaterials(state.currentCourseId);
+        return state.coursesCache;
+      }
+      async function refreshCourseMaterials(courseId = state.currentCourseId) {
+        if (!state.currentUser || !courseId) {
+          state.courseMaterialsCache = [];
+          renderLessonSelect();
+          renderTeacherMaterialList();
+          renderDashboardSummary();
+          renderCourseWorkspace();
+          return [];
+        }
+        const data = await apiRequest(`/api/materials?courseId=${encodeURIComponent(courseId)}`);
+        state.courseMaterialsCache = data.materials || [];
+        renderLessonSelect();
+        renderTeacherMaterialList();
+        renderDashboardSummary();
+        renderCourseWorkspace();
+        return state.courseMaterialsCache;
+      }
+      async function joinCourse() {
+        const inviteCode = els.inviteCodeInput?.value.trim();
+        if (!inviteCode) return showToast('授業コードを入力してください。', 'warn');
+        try {
+          await apiRequest('/api/courses/join', { method: 'POST', body: JSON.stringify({ inviteCode }) });
+          els.inviteCodeInput.value = '';
+          await refreshCourses();
+          showToast('授業に参加しました。');
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+      async function createCourse() {
+        openCourseDialog();
+      }
+      function openCourseDialog(course = null) {
+        state.editingCourseId = course?.id || null;
+        if (els.courseDialogTitle) els.courseDialogTitle.textContent = course ? '授業を編集' : '授業を作成';
+        if (els.confirmCourseDialogBtn) els.confirmCourseDialogBtn.textContent = course ? '更新' : '作成';
+        if (els.courseDialogNameInput) els.courseDialogNameInput.value = course?.name || '';
+        if (els.courseDialogSemesterInput) els.courseDialogSemesterInput.value = course?.semester || '';
+        if (els.courseDialogDescriptionInput) els.courseDialogDescriptionInput.value = course?.description || '';
+        if (els.courseDialogError) {
+          els.courseDialogError.hidden = true;
+          els.courseDialogError.textContent = '';
+        }
+        openModal(els.courseDialogBackdrop);
+        requestAnimationFrame(() => els.courseDialogNameInput?.focus());
+      }
+      function closeCourseDialog() {
+        closeModal(els.courseDialogBackdrop);
+        state.editingCourseId = null;
+      }
+      async function submitCourseDialog() {
+        const name = els.courseDialogNameInput?.value.trim() || '';
+        if (!name) {
+          if (els.courseDialogError) {
+            els.courseDialogError.textContent = '授業名を入力してください。';
+            els.courseDialogError.hidden = false;
+          }
+          els.courseDialogNameInput?.focus();
+          return;
+        }
+        const payload = {
+          name,
+          semester: els.courseDialogSemesterInput?.value.trim() || '',
+          description: els.courseDialogDescriptionInput?.value.trim() || ''
+        };
+        try {
+          const editingId = state.editingCourseId;
+          const data = await apiRequest(editingId ? `/api/courses/${editingId}` : '/api/courses', {
+            method: editingId ? 'PUT' : 'POST',
+            body: JSON.stringify(payload)
+          });
+          state.currentCourseId = data.course.id;
+          closeCourseDialog();
+          await refreshCourses();
+          showToast(editingId ? '授業情報を更新しました。' : `授業を作成しました。授業コード: ${data.course.inviteCode}`);
+        } catch (error) {
+          if (els.courseDialogError) {
+            els.courseDialogError.textContent = error.message;
+            els.courseDialogError.hidden = false;
+          } else {
+            showToast(error.message, 'error');
+          }
+        }
+      }
+      async function deleteCourse(id) {
+        const course = (state.coursesCache || []).find(item => String(item.id) === String(id));
+        const ok = await confirmAction({
+          title: '授業を削除',
+          message: `「${course?.name || 'この授業'}」を削除します。教材と学生の作業も削除されます。元に戻せません。`,
+          confirmLabel: '削除'
+        });
+        if (!ok) return;
+        try {
+          await apiRequest(`/api/courses/${id}`, { method: 'DELETE' });
+          if (String(state.currentCourseId) === String(id)) state.currentCourseId = null;
+          await refreshCourses();
+          showToast('授業を削除しました。', 'warn');
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+      function getCurrentCourse() {
+        return (state.coursesCache || []).find(course => String(course.id) === String(state.currentCourseId)) || null;
+      }
+      function findCourseName(id) {
+        return (state.coursesCache || []).find(course => String(course.id) === String(id))?.name || '名称未設定の授業';
+      }
+      function getCourseMaterials(courseId = state.currentCourseId) {
+        const list = state.courseMaterialsCache || [];
+        return courseId ? list.filter(item => String(item.courseId) === String(courseId)) : list;
+      }
+      function renderDashboardSummary() {
+        if (!els.dashboardSummary) return;
+        const role = state.currentUser?.role || 'student';
+        const courseCount = state.coursesCache.length;
+        const materialCount = (state.courseMaterialsCache || []).length;
+        const publishedCount = (state.courseMaterialsCache || []).filter(item => item.status === 'published').length;
+        const draftCount = (state.courseMaterialsCache || []).filter(item => item.status === 'draft').length;
+        const workCount = (state.savesCache || []).filter(item => item.hasStudentWork).length;
+        els.dashboardSummary.hidden = true;
+        if (role === 'student') {
+          els.dashboardSummary.innerHTML = '';
+          return;
+        }
+        const cards = role === 'student'
+          ? [
+            ['参加中の授業', courseCount, courseCount ? 'まず授業を選び、その授業の教材から作業を始めます。' : 'まず授業コードで授業に参加します。'],
+            ['取り組める教材', publishedCount, '参加済み授業で公開中の教材だけが表示されます。'],
+            ['学習記録', workCount, '教材を開くと、自分の保存内容が優先して読み込まれます。']
+          ]
+          : [
+            ['担当授業', courseCount, '教師の作業は教材一覧ではなく、授業ごとの管理から始まります。'],
+            ['授業教材', materialCount, `公開 ${publishedCount} / 下書き ${draftCount}`],
+            ['未公開の下書き', draftCount, '授業内で編集し、準備が整ってから学生に公開します。']
+          ];
+        els.dashboardSummary.innerHTML = cards.map(([label, value, meta]) => `
+          <article class="app-stat-card">
+            <div class="app-stat-card__label">${label}</div>
+            <div class="app-stat-card__value">${value}</div>
+            <div class="app-stat-card__meta">${meta}</div>
+          </article>
+        `).join('');
+      }
+      function renderCourseWorkspace() {
+        if (!els.courseWorkspace) return;
+        const role = state.currentUser?.role || 'student';
+        const course = getCurrentCourse();
+        if (!course) {
+          els.courseWorkspace.innerHTML = `
+            <section class="workspace-card workspace-card--empty">
+              <div>
+                <h3 class="workspace-card__title">${role === 'student' ? '授業に参加すると、ここから学習を始められます' : '授業を作成すると、ここが教師用の作業入口になります'}</h3>
+                <p class="workspace-card__desc">${role === 'student' ? 'まず授業コードを入力してください。参加後は公開中の教材と自分の学習記録だけが表示されます。' : 'まず授業を1つ作成してください。作成後はこの場所から教材管理へ進めます。'}</p>
+              </div>
+              <div class="workspace-actions">
+                <span class="pill">${role === 'student' ? 'STEP 1: 授業コードで参加' : 'STEP 1: 授業を作成'}</span>
+                <span class="pill">${role === 'student' ? 'STEP 2: 教材を開く' : 'STEP 2: 教材を管理'}</span>
+              </div>
+            </section>`;
+          return;
+        }
+        if (role !== 'student') {
+          els.courseWorkspace.innerHTML = '';
+          return;
+        }
+        const materials = getCourseMaterials(course.id);
+        const published = materials.filter(item => item.status === 'published');
+        const recentWorks = role === 'student'
+          ? materials.filter(item => item.hasStudentWork).slice(0, 4)
+          : [];
+        if (role === 'student') {
+          els.courseWorkspace.innerHTML = `
+            <section class="student-course-hero">
+              <div class="student-course-hero__main">
+                <div class="student-course-hero__eyebrow">選択中の授業</div>
+                <h3 class="student-course-hero__title">${esc(course.name)}</h3>
+                <p class="student-course-hero__desc">${esc(course.description || 'この授業で公開されている教材から学習を始められます。')}</p>
+              </div>
+              <div class="student-course-hero__meta">
+                <span class="pill">${esc(course.semester || '学期未設定')}</span>
+                <span class="pill">${published.length} 件の教材</span>
+              </div>
+            </section>
+            <section class="student-section">
+              <div class="student-section__head">
+                <div>
+                  <h3 class="student-section__title">教材を選ぶ</h3>
+                  <p class="student-section__desc">開く教材を1つ選んで、加工画面へ進みます。</p>
+                </div>
+              </div>
+              ${published.length ? `
+                <div class="student-material-grid">
+                  ${published.slice(0, 12).map(item => `
+                    <article class="student-material-card">
+                      <div class="student-material-card__body">
+                        <div class="student-material-card__status">${item.hasStudentWork ? '保存済み' : '未着手'}</div>
+                        <h4 class="student-material-card__title">${esc(item.title)}</h4>
+                        <p class="student-material-card__meta">${item.hasStudentWork ? '自分の保存内容から再開します。' : '教師が公開した教材を開きます。'}</p>
+                        <p class="student-material-card__date">更新 ${fmt(item.updatedAt)}</p>
+                      </div>
+                      <div class="student-material-card__actions">
+                        <button class="sv-btn" type="button" data-course-action="open-material" data-id="${item.id}">${item.hasStudentWork ? '続きから再開' : '加工を開始'}</button>
+                        <button class="sv-btn sv-btn--ghost" type="button" data-saved-action="preview" data-id="${item.id}">プレビュー</button>
+                      </div>
+                    </article>
+                  `).join('')}
+                </div>
+              ` : '<div class="data-empty">この授業にはまだ公開中の教材がありません。教師が公開すると、ここに表示されます。</div>'}
+            </section>
+            <section class="student-section">
+              <div class="student-section__head">
+                <div>
+                  <h3 class="student-section__title">最近の学習記録</h3>
+                  <p class="student-section__desc">保存した教材だけを短く表示します。</p>
+                </div>
+              </div>
+              ${recentWorks.length ? `
+                <div class="student-history-list">
+                  ${recentWorks.map(item => `
+                    <article class="student-history-item">
+                      <div>
+                        <h4 class="student-history-item__title">${esc(item.title)}</h4>
+                        <p class="student-history-item__meta">最終保存 ${fmt(item.updatedAt)}</p>
+                      </div>
+                      <button class="sv-btn sv-btn--ghost" type="button" data-course-action="open-material" data-id="${item.id}">再開</button>
+                    </article>
+                  `).join('')}
+                </div>
+              ` : '<div class="data-empty">この授業の学習記録はまだありません。教材を1件開いて保存すると、ここに表示されます。</div>'}
+            </section>
+          `;
+          return;
+        }
+      }
+      function renderCourseList() {
+        if (!els.courseList) return;
+        const role = state.currentUser?.role || 'student';
+        if (els.courseJoinPanel) els.courseJoinPanel.hidden = role !== 'student';
+        if (els.courseCreatePanel) els.courseCreatePanel.hidden = true;
+        if (!state.coursesCache.length) {
+          els.courseList.innerHTML = role === 'student' ? '' : `
+            <section class="data-panel course-crud-panel">
+              <div class="data-panel__head">
+                <div>
+                  <h3 class="data-panel__title">授業管理</h3>
+                  <p class="data-panel__desc">授業を作成すると、教材管理画面で教材を追加できます。</p>
+                </div>
+                <div class="workspace-actions">
+                  <button class="sa-btn se-btn--primary" type="button" data-course-action="new-course">授業を作成</button>
+                </div>
+              </div>
+              <div class="data-empty">まだ担当授業がありません。</div>
+            </section>`;
+          renderDashboardSummary();
+          renderCourseWorkspace();
+          return;
+        }
+        if (role !== 'student') {
+          els.courseList.innerHTML = `
+            <section class="data-panel course-crud-panel">
+              <div class="data-panel__head">
+                <div>
+                  <h3 class="data-panel__title">授業管理</h3>
+                  <p class="data-panel__desc">授業の作成・編集・削除をここで行い、教材は教材管理画面で扱います。</p>
+                </div>
+                <div class="workspace-actions">
+                  <button class="sa-btn se-btn--primary" type="button" data-course-action="new-course">授業を作成</button>
+                </div>
+              </div>
+              <div class="data-table-wrap">
+                <table class="data-table course-crud-table">
+                  <thead>
+                    <tr>
+                      <th>授業名</th>
+                      <th>学期</th>
+                      <th>参加者</th>
+                      <th>教材</th>
+                      <th>授業コード</th>
+                      <th>更新日時</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${state.coursesCache.map(course => `
+                      <tr class="${String(state.currentCourseId) === String(course.id) ? 'is-selected' : ''}">
+                        <td>
+                          <div class="data-table__title">${esc(course.name)}</div>
+                          <div class="data-table__meta">${esc(course.description || 'この授業の教材と学生作業を管理します。')}</div>
+                        </td>
+                        <td>${esc(course.semester || '学期未設定')}</td>
+                        <td>${course.memberCount || 0}</td>
+                        <td>${course.materialCount || 0}</td>
+                        <td><span class="pill">${esc(course.inviteCode)}</span></td>
+                        <td>${fmt(course.updatedAt)}</td>
+                        <td class="course-crud-table__actions">
+                          <div class="workspace-actions course-row-actions">
+                            <button class="sv-btn sv-btn--ghost" type="button" data-course-action="focus" data-id="${course.id}">選択</button>
+                            <button class="sv-btn" type="button" data-course-action="manage-materials" data-id="${course.id}">教材</button>
+                            <button class="sv-btn sv-btn--ghost" type="button" data-course-action="edit-course" data-id="${course.id}">編集</button>
+                            <button class="sv-btn sv-btn--danger" type="button" data-course-action="delete-course" data-id="${course.id}">削除</button>
+                          </div>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </section>`;
+          renderDashboardSummary();
+          renderCourseWorkspace();
+          return;
+        }
+        els.courseList.innerHTML = `
+          <aside class="course-sidebar">
+            <div>
+              <h3 class="course-sidebar__title">受講中の授業</h3>
+              <p class="course-sidebar__desc">先に授業を選ぶと、教材と記録が右側にまとまります。</p>
+            </div>
+            <div class="course-sidebar__list">
+              ${state.coursesCache.map(course => `
+                <article class="course-nav-card ${String(state.currentCourseId) === String(course.id) ? 'is-active-course' : ''}">
+                  <div>
+                    <h4 class="course-nav-card__title">${esc(course.name)}</h4>
+                    <p class="course-nav-card__meta">${esc(course.semester || '学期未設定')} / 教材 ${course.materialCount || 0} 件</p>
+                  </div>
+                  <button class="sv-btn ${String(state.currentCourseId) === String(course.id) ? '' : 'sv-btn--ghost'}" type="button" data-course-action="focus" data-id="${course.id}">
+                    ${String(state.currentCourseId) === String(course.id) ? '選択中' : '選択'}
+                  </button>
+                </article>
+              `).join('')}
+            </div>
+          </aside>`;
+        renderDashboardSummary();
+        renderCourseWorkspace();
+      }
+      function renderTeacherMaterialList() {
+        if (!els.teacherMaterialList) return;
+        const role = state.currentUser?.role || 'student';
+        if (role !== 'teacher' && role !== 'admin') {
+          els.teacherMaterialList.innerHTML = '';
+          if (els.materialsSummary) els.materialsSummary.innerHTML = '';
+          return;
+        }
+        const course = getCurrentCourse();
+        const items = state.courseMaterialsCache || [];
+        if (els.materialsSummary) {
+          const courseButtons = (state.coursesCache || []).map(item => `
+            <button class="sv-btn ${String(state.currentCourseId) === String(item.id) ? '' : 'sv-btn--ghost'}" type="button" data-course-action="focus" data-id="${item.id}">
+              ${esc(item.name)}
+            </button>
+          `).join('');
+          els.materialsSummary.innerHTML = `
+            <section class="workspace-card workspace-card--compact materials-switcher">
+              <div class="workspace-card__head">
+                <div>
+                  <h3 class="workspace-card__title">${course ? esc(course.name) : '授業を選択してください'}</h3>
+                  <p class="workspace-card__desc">${course
+                    ? `ここでは ${esc(course.name)} の教材だけを扱います。授業を切り替えても、この画面のまま続けられます。`
+                    : '先に授業を選ぶと、その授業の教材一覧と学生の保存状況がここに表示されます。'
+                  }</p>
+                </div>
+                <div class="workspace-meta">
+                  ${course ? `<span class="pill">${esc(course.semester || '学期未設定')}</span>` : ''}
+                  ${course ? `<span class="pill">授業コード ${esc(course.inviteCode)}</span>` : ''}
+                </div>
+              </div>
+              <div class="workspace-actions">${courseButtons || '<span class="workspace-row__meta">担当授業がまだありません。</span>'}</div>
+            </section>
+          `;
+        }
+        if (!course) {
+          els.teacherMaterialList.innerHTML = '<div class="sv-empty"><h2>授業を選択すると教材管理を始められます</h2><p>まず上の授業ボタンから1つ選んでください。教材の作成・公開・学生確認は授業ごとに行います。</p></div>';
+          renderWorksPlaceholder();
+          return;
+        }
+        const draftCount = items.filter(item => item.status === 'draft').length;
+        const publishedCount = items.filter(item => item.status === 'published').length;
+        if (!items.length) {
+          els.teacherMaterialList.innerHTML = `
+            <section class="data-panel">
+              <div class="data-panel__head">
+                <div>
+                  <h3 class="data-panel__title">教材一覧</h3>
+                  <p class="data-panel__desc">${esc(course.name)} にはまだ教材がありません。まず1件作成すると、この画面で一覧管理できるようになります。</p>
+                </div>
+                <div class="workspace-actions">
+                  <button class="sa-btn se-btn--primary" type="button" data-course-action="new-material" data-id="${course.id}">教材を新規作成</button>
+                </div>
+              </div>
+            </section>`;
+          renderWorksPlaceholder();
+          return;
+        }
+        const drafts = items.filter(item => item.status === 'draft');
+        const published = items.filter(item => item.status === 'published');
+        renderWorksPlaceholder();
+        const renderMaterialRows = list => list.map(item => `
+          <tr>
+            <td>
+              <div class="data-table__title">${esc(item.title || '無題')}</div>
+              <div class="data-table__meta">ベース教材 ${esc(findLessonTitle(item.baseLessonId))}</div>
+            </td>
+            <td>${fmt(item.updatedAt)}</td>
+            <td><span class="pill">${item.status === 'published' ? '公開中' : '下書き'}</span></td>
+            <td>
+              <div class="workspace-actions">
+                <button class="sv-btn sv-btn--ghost" type="button" data-material-action="edit" data-id="${item.id}">編集</button>
+                <button class="sv-btn" type="button" data-material-action="toggle-status" data-id="${item.id}" data-status="${item.status === 'published' ? 'draft' : 'published'}">${item.status === 'published' ? '公開取消' : '公開'}</button>
+                <button class="sv-btn sv-btn--ghost" type="button" data-material-action="works" data-id="${item.id}">学生一覧</button>
+                <button class="sv-btn sv-btn--danger" type="button" data-saved-action="delete" data-id="${item.id}">削除</button>
+              </div>
+            </td>
+          </tr>
+        `).join('');
+        els.teacherMaterialList.innerHTML = `
+          <section class="data-panel">
+            <div class="data-panel__head">
+              <div>
+                <h3 class="data-panel__title">教材一覧</h3>
+                <p class="data-panel__desc">この授業の教材だけを一覧表示しています。編集・公開・学生作業確認を表形式でまとめています。</p>
+              </div>
+              <div class="workspace-meta">
+                <span class="pill">下書き ${draftCount}</span>
+                <span class="pill">公開 ${publishedCount}</span>
+              </div>
+            </div>
+            <div class="workspace-actions">
+                <button class="sa-btn se-btn--primary" type="button" data-course-action="new-material" data-id="${course.id}">教材を新規作成</button>
+                <button class="sa-btn sa-btn--ghost" type="button" data-course-action="focus" data-id="${course.id}">この授業を確認</button>
+            </div>
+            <div class="data-panel__stack">
+              <div class="data-subpanel">
+                <div class="data-subpanel__title">下書き教材</div>
+                ${drafts.length ? `
+                  <div class="data-table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr><th>教材名</th><th>更新日時</th><th>状態</th><th>操作</th></tr>
+                      </thead>
+                      <tbody>${renderMaterialRows(drafts)}</tbody>
+                    </table>
+                  </div>
+                ` : '<div class="data-empty">下書き教材はまだありません。</div>'}
+              </div>
+              <div class="data-subpanel">
+                <div class="data-subpanel__title">公開中の教材</div>
+                ${published.length ? `
+                  <div class="data-table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr><th>教材名</th><th>更新日時</th><th>状態</th><th>操作</th></tr>
+                      </thead>
+                      <tbody>${renderMaterialRows(published)}</tbody>
+                    </table>
+                  </div>
+                ` : '<div class="data-empty">公開中の教材はまだありません。</div>'}
+              </div>
+            </div>
+          </section>
+        `;
+      }
+      async function toggleMaterialStatus(id, status) {
+        try {
+          await apiRequest(`/api/materials/${id}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status })
+          });
+          await refreshCourseMaterials();
+          showToast(status === 'published' ? '教材を公開しました。' : '教材を下書きに戻しました。');
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+      async function renderWorksForMaterial(id) {
+        if (!els.workList) return;
+        try {
+          const data = await apiRequest(`/api/materials/${id}/works`);
+          const works = data.works || [];
+          const material = (state.courseMaterialsCache || []).find(item => String(item.id) === String(id));
+          if (!works.length) {
+            els.workList.innerHTML = `<section class="data-panel"><div class="data-panel__head"><div><h3 class="data-panel__title">${esc(material?.title || '現在の教材')}</h3><p class="data-panel__desc">まだ学生の保存記録はありません。学生が保存すると、ここに一覧表示されます。</p></div><div class="workspace-actions"><button class="sa-btn sa-btn--ghost" type="button" data-material-action="clear-works">閉じる</button></div></div></section>`;
+            return;
+          }
+          els.workList.innerHTML = `
+            <section class="data-panel">
+              <div class="data-panel__head">
+                <div>
+                  <h3 class="data-panel__title">${esc(material?.title || '学生の作業一覧')}</h3>
+                  <p class="data-panel__desc">この教材を保存した学生だけを一覧表示します。</p>
+                </div>
+                <div class="workspace-actions">
+                  <button class="sa-btn sa-btn--ghost" type="button" data-material-action="clear-works">一覧を閉じる</button>
+                </div>
+              </div>
+              <div class="data-table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>学生</th>
+                      <th>メール</th>
+                      <th>更新日時</th>
+                      <th>操作ログ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${works.map(work => `
+                      <tr>
+                        <td>${esc(work.studentName || work.studentEmail || `Student ${work.studentId}`)}</td>
+                        <td>${esc(work.studentEmail || '-')}</td>
+                        <td>${fmt(work.updatedAt)}</td>
+                        <td>${Array.isArray(work.operationLogs) ? work.operationLogs.length : 0} 件</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          `;
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+      function renderWorksPlaceholder() {
+        if (!els.workList) return;
+        els.workList.innerHTML = '<section class="data-panel"><div class="data-panel__head"><div><h3 class="data-panel__title">学生の作業一覧</h3><p class="data-panel__desc">教材管理の各行にある「学生一覧」から、保存済み学生を表形式で確認できます。</p></div></div></section>';
+      }
+      async function renderAdminPanel() {
+        if (!els.adminPanel) return;
+        try {
+          const data = await apiRequest('/api/admin/summary');
+          els.adminPanel.innerHTML = ['ユーザー管理', '権限管理', '授業管理', 'システム設定'].map(label => `
+            <article class="sv-card">
+              <h3 class="sv-card__title">${label}</h3>
+              <p class="sv-card__source">この段階ではプレースホルダーのみです。後続フェーズで実装します。</p>
+            </article>
+          `).join('') + `
+            <article class="sv-card">
+              <h3 class="sv-card__title">基本データ</h3>
+              <p class="sv-card__source">users ${data.users} / courses ${data.courses} / materials ${data.materials} / works ${data.studentWorks}</p>
+            </article>
+          `;
+        } catch (error) {
+          els.adminPanel.innerHTML = `<div class="sv-empty"><h2>${esc(error.message)}</h2></div>`;
+        }
       }
       async function recordEvent(eventType, metadata = {}) {
         if (!state.authToken) return;
@@ -279,6 +883,7 @@
           state.currentUser = data.user;
           syncAuthUi();
           await loadRemotePrefs();
+          await refreshCourses();
           await refreshSaves();
         } catch {
           setAuthSession('', null);
@@ -333,7 +938,7 @@
       function resolveConfirmDialog(value) { closeModal(els.confirmDialogBackdrop); const resolver = state.confirmDialogResolver; state.confirmDialogResolver = null; if (resolver) resolver(value); }
       function snapshot() { return { html: els.lessonContainer.innerHTML, log: clone(state.log || []) }; }
       function pushUndo() { state.undoStack.push(snapshot()); if (state.undoStack.length > UNDO_MAX) state.undoStack.shift(); state.redoStack = []; }
-      function restoreState(s) { if (!s) return; els.lessonContainer.innerHTML = s.html; state.log = s.log || []; saveDraft(); }
+      function restoreState(s) { if (!s) return; els.lessonContainer.innerHTML = s.html; ensureResizableImages(); state.log = s.log || []; saveDraft(); }
       function undo() { if (state.undoStack.length <= 1) return; state.redoStack.push(snapshot()); state.undoStack.pop(); restoreState(state.undoStack[state.undoStack.length - 1]); }
       function redo() { if (!state.redoStack.length) return; state.undoStack.push(snapshot()); restoreState(state.redoStack.pop()); }
       function lockHistoryHotkey() { state.__historyHotkeyLock = true; clearTimeout(state.__historyHotkeyTimer); state.__historyHotkeyTimer = setTimeout(() => { state.__historyHotkeyLock = false; }, 80); }
@@ -424,12 +1029,55 @@
 
       // 教材の読込と保存済み教材一覧の描画まわり。
       function renderLessonSelect() {
-        els.lessonSelect.innerHTML = SAMPLE_LESSONS.map(l => `<option value="${l.id}">${esc(l.title)}</option>`).join('');
-        if (!state.currentLessonId) state.currentLessonId = SAMPLE_LESSONS[0].id;
+        const role = state.currentUser?.role || 'student';
+        const isStudent = role === 'student';
+        if (els.courseSelectWrap) els.courseSelectWrap.hidden = !isStudent;
+        if (els.courseSelect && isStudent) {
+          els.courseSelect.innerHTML = (state.coursesCache || []).map(course => `<option value="${course.id}">${esc(course.name)}</option>`).join('');
+          if (!state.coursesCache.length) {
+            els.courseSelect.innerHTML = '<option value="">授業がありません</option>';
+          } else {
+            if (!state.currentCourseId || !state.coursesCache.some(course => String(course.id) === String(state.currentCourseId))) {
+              state.currentCourseId = state.coursesCache[0].id;
+            }
+            els.courseSelect.value = String(state.currentCourseId);
+          }
+        }
+        const source = role === 'student'
+          ? (state.courseMaterialsCache || []).filter(item => item.status === 'published')
+          : SAMPLE_LESSONS.map(l => ({ id: l.id, baseLessonId: l.id, title: l.title, isSample: true }));
+        if (els.lessonSelectLabel) els.lessonSelectLabel.textContent = role === 'student' ? '教材' : 'ベース教材';
+        els.lessonSelect.innerHTML = source.map(item => `<option value="${item.id}">${esc(item.title)}</option>`).join('');
+        if (!source.length) {
+          els.lessonSelect.innerHTML = '<option value="">教材がありません</option>';
+          return;
+        }
+        if (!state.currentLessonId || !source.some(item => String(item.id) === String(state.currentLessonId))) {
+          state.currentLessonId = source[0].id;
+        }
         els.lessonSelect.value = state.currentLessonId;
       }
 
       function loadLessonById(lessonId, options = {}) {
+        const role = state.currentUser?.role || 'student';
+        if (role === 'student') {
+          if (!state.currentCourseId) return showToast('先に授業を選択してください。', 'warn');
+          const item = (state.courseMaterialsCache || []).find(material => String(material.id) === String(lessonId));
+          if (!item) return showToast('公開中の教材を選択してください。', 'warn');
+          state.currentLessonId = item.id;
+          state.baseLessonId = item.baseLessonId;
+          state.currentSavedId = item.id;
+          state.log = Array.isArray(item.log) ? item.log : [];
+          els.titleDisplay.textContent = item.title;
+          els.lessonContainer.innerHTML = item.htmlContent || item.originalHtmlContent || '';
+          ensureResizableImages();
+          state.undoStack = [snapshot()];
+          state.redoStack = [];
+          clearCurrentAction();
+          saveDraft();
+          if (!options.silent) showToast(item.hasStudentWork ? '自分の保存内容を読み込みました。' : '教師が公開した教材を読み込みました。');
+          return;
+        }
         const lesson = SAMPLE_LESSONS.find(l => l.id === lessonId);
         if (!lesson) return;
         state.currentLessonId = lesson.id;
@@ -438,6 +1086,7 @@
         state.log = [];
         els.titleDisplay.textContent = lesson.title;
         els.lessonContainer.innerHTML = lesson.html;
+        ensureResizableImages();
         state.undoStack = [snapshot()];
         state.redoStack = [];
         clearCurrentAction();
@@ -490,30 +1139,49 @@
         els.savedCount.textContent = String(items.length);
         if (!items.length) { els.savedList.innerHTML = ''; els.savedEmpty.hidden = false; return; }
         els.savedEmpty.hidden = true;
-        els.savedList.innerHTML = items.map(item => `
-      <article class="sv-card">
-        <div class="sv-card__top">
-          <div>
-            <h3 class="sv-card__title">${esc(item.title || '(no title)')}</h3>
-            <div class="sv-card__source">元教材: ${esc(findLessonTitle(item.baseLessonId))}</div>
-          </div>
-          <div class="sv-card__meta">
-            <span class="pill">ログ ${Array.isArray(item.log) ? item.log.length : 0} 件</span>
-          </div>
-        </div>
-        <div class="sv-card__bottom">
-          <div class="sv-card__dates">
-            <span>作成 ${fmt(item.createdAt)}</span>
-            <span>更新 ${fmt(item.updatedAt)}</span>
-          </div>
-          <div class="sv-card__actions">
-            <button class="sv-btn sv-btn--ghost" type="button" data-saved-action="preview" data-id="${item.id}">プレビュー</button>
-            <button class="sv-btn" type="button" data-saved-action="open" data-id="${item.id}">導入</button>
-            <button class="sv-btn sv-btn--danger" type="button" data-saved-action="delete" data-id="${item.id}">削除</button>
-          </div>
-        </div>
-      </article>
-    `).join('');
+        els.savedList.innerHTML = `
+          <section class="data-panel">
+            <div class="data-panel__head">
+              <div>
+                <h3 class="data-panel__title">保存済みの学習記録</h3>
+                <p class="data-panel__desc">授業ごとに保存した教材を一覧で確認し、途中から再開できます。</p>
+              </div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>教材名</th>
+                    <th>授業</th>
+                    <th>更新日時</th>
+                    <th>ログ</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${items.map(item => `
+                    <tr>
+                      <td>
+                        <div class="data-table__title">${esc(item.title || '無題')}</div>
+                        <div class="data-table__meta">ベース教材 ${esc(findLessonTitle(item.baseLessonId))}</div>
+                      </td>
+                      <td>${item.courseId ? esc(findCourseName(item.courseId)) : '-'}</td>
+                      <td>${fmt(item.updatedAt)}</td>
+                      <td>${Array.isArray(item.log) ? item.log.length : 0} 件</td>
+                      <td>
+                        <div class="workspace-actions">
+                          <button class="sv-btn sv-btn--ghost" type="button" data-saved-action="preview" data-id="${item.id}">プレビュー</button>
+                          <button class="sv-btn" type="button" data-saved-action="open" data-id="${item.id}">${state.currentUser?.role === 'student' ? '続きから再開' : '編集に読み込む'}</button>
+                          ${state.currentUser?.role === 'student' ? '' : `<button class="sv-btn sv-btn--danger" type="button" data-saved-action="delete" data-id="${item.id}">削除</button>`}
+                        </div>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        `;
       }
       function makeSorter(key) {
         const byDate = (field, dir) => (a, b) => { const ta = new Date(a[field] || 0).getTime(); const tb = new Date(b[field] || 0).getTime(); return dir === 'asc' ? ta - tb : tb - ta; };
@@ -522,14 +1190,38 @@
       }
       function findLessonTitle(id) { return SAMPLE_LESSONS.find(l => l.id === id)?.title || '不明な教材'; }
 
+      function openTeacherMaterial(id) {
+        const item = (state.courseMaterialsCache || []).find(material => String(material.id) === String(id));
+        if (!item) return showToast('教材が見つかりません。', 'error');
+        state.currentSavedId = item.id;
+        state.currentLessonId = item.baseLessonId;
+        state.baseLessonId = item.baseLessonId;
+        state.currentCourseId = item.courseId || state.currentCourseId;
+        state.log = Array.isArray(item.log) ? item.log : [];
+        renderLessonSelect();
+        if (els.lessonSelect) els.lessonSelect.value = String(item.baseLessonId);
+        els.titleDisplay.textContent = item.title || findLessonTitle(item.baseLessonId);
+        els.lessonContainer.innerHTML = item.htmlContent || '';
+        ensureResizableImages();
+        state.undoStack = [snapshot()];
+        state.redoStack = [];
+        saveDraft();
+        setView('editor');
+        recordEvent('material_load_into_editor', { materialId: item.id, title: item.title || '' });
+        showToast('教材を編集画面に読み込みました。');
+      }
+
       async function openSavedItem(id) {
         if (!state.currentUser) return showToast('ログインしてください。', 'warn');
         const item = loadSaves().find(x => String(x.id) === String(id));
         if (!item) return showToast('保存済み教材が見つかりません。', 'error');
-        state.currentSavedId = item.id; state.currentLessonId = item.baseLessonId; state.baseLessonId = item.baseLessonId; state.log = Array.isArray(item.log) ? item.log : [];
-        els.lessonSelect.value = item.baseLessonId;
+        const isStudent = (state.currentUser?.role || 'student') === 'student';
+        state.currentSavedId = item.id; state.currentLessonId = isStudent ? item.id : item.baseLessonId; state.baseLessonId = item.baseLessonId; state.log = Array.isArray(item.log) ? item.log : [];
+        state.currentCourseId = item.courseId || state.currentCourseId;
+        els.lessonSelect.value = String(state.currentLessonId);
         els.titleDisplay.textContent = item.title || findLessonTitle(item.baseLessonId);
         els.lessonContainer.innerHTML = item.htmlContent || '';
+        ensureResizableImages();
         state.undoStack = [snapshot()]; state.redoStack = [];
         saveDraft();
         setView('editor');
@@ -540,6 +1232,30 @@
       async function saveCurrentMaterial() {
         if (!state.currentUser) return showToast('保存するにはログインしてください。', 'warn');
         if (!state.baseLessonId) return showToast('教材が選択されていません。', 'warn');
+        const role = state.currentUser.role || 'student';
+        if (role === 'student') {
+          if (!state.currentSavedId) return showToast('授業教材がまだ読み込まれていません。', 'warn');
+          try {
+            const data = await apiRequest(`/api/materials/${state.currentSavedId}/work`, {
+              method: 'POST',
+              body: JSON.stringify({
+                editedContent: els.lessonContainer.innerHTML,
+                operationLogs: clone(state.log)
+              })
+            });
+            const saved = data.material;
+            state.courseMaterialsCache = (state.courseMaterialsCache || []).map(item => String(item.id) === String(saved.id) ? saved : item);
+            saveSaves(state.courseMaterialsCache);
+            state.draftChangedAt = nowIso();
+            saveDraft();
+            renderSavedList();
+            showToast('自分の加工結果を保存しました。');
+          } catch (error) {
+            showToast(error.message, 'error');
+          }
+          return;
+        }
+        if (!state.currentCourseId) return showToast('先に授業を作成または選択してください。', 'warn');
         const existing = loadSaves().find(x => String(x.id) === String(state.currentSavedId));
         const defaultTitle = existing?.title || `${els.titleDisplay.textContent}（加工版）`;
         const title = await requestSaveTitle(defaultTitle);
@@ -547,9 +1263,11 @@
         const now = nowIso();
         const payload = {
           baseLessonId: state.baseLessonId,
+          courseId: state.currentCourseId,
           title: title.trim(),
           htmlContent: els.lessonContainer.innerHTML,
-          log: clone(state.log)
+          log: clone(state.log),
+          status: existing?.status || 'draft'
         };
         try {
           const data = await apiRequest(existing ? `/api/materials/${existing.id}` : '/api/materials', {
@@ -605,24 +1323,53 @@
       function closePreview() { closeModal(els.previewDialogBackdrop); }
 
       function setView(view) {
+        const role = state.currentUser?.role || 'student';
+        if (view === 'editor' && role === 'teacher' && !state.currentCourseId) {
+          showToast('先に授業を選択してください。教師の教材加工は授業ごとに行います。', 'warn');
+          view = 'courses';
+        }
+        if (view === 'materials' && role !== 'student' && !state.currentCourseId && state.coursesCache.length) {
+          state.currentCourseId = state.coursesCache[0].id;
+        }
         state.currentView = view;
         const isEditor = view === 'editor';
+        const isSaved = view === 'saved';
         els.editorView.hidden = !isEditor;
-        els.savedView.hidden = isEditor;
+        els.savedView.hidden = !isSaved;
+        if (els.coursesView) els.coursesView.hidden = view !== 'courses';
+        if (els.materialsView) els.materialsView.hidden = view !== 'materials';
+        if (els.adminView) els.adminView.hidden = view !== 'admin';
         els.editorTopActions.hidden = !isEditor;
-        els.savedTopActions.hidden = isEditor;
-        els.headerTitle.textContent = isEditor ? '加工教材' : '保存済み教材';
-        els.headerSubtitle.textContent = isEditor
-          ? 'ログイン中のユーザーごとに教材加工データと編集ツール設定を保存します。'
-          : 'データベースに保存した教材を一覧管理できます。';
+        els.savedTopActions.hidden = !isSaved;
+        const titles = {
+          courses: role === 'teacher' ? '教師ダッシュボード / 授業一覧' : role === 'admin' ? '授業管理' : '授業一覧',
+          editor: role === 'teacher' ? '教材編集' : '教材加工',
+          saved: '学習記録',
+          materials: '教材管理',
+          admin: '管理者コンソール'
+        };
+        els.headerTitle.textContent = titles[view] || 'GAKUZAI';
+        els.headerSubtitle.textContent = role === 'student'
+          ? '参加中の授業で公開された教材だけを開けます。加工結果は自分専用の記録として保存されます。'
+          : role === 'teacher'
+            ? '教師はまず授業を選び、その授業の教材を管理・編集し、必要に応じて学生へ公開します。'
+            : '管理者向けの基本入口を用意しています。システムの基礎データを確認できます。';
         document.querySelectorAll('[data-view]').forEach(el => el.classList.toggle('active', el.dataset.view === view));
+        if (view === 'courses') refreshCourses().catch(error => showToast(error.message, 'error'));
+        if (view === 'materials') refreshCourseMaterials().then(() => renderWorksPlaceholder()).catch(error => showToast(error.message, 'error'));
+        if (view === 'admin') renderAdminPanel();
         if (view === 'saved') {
           recordEvent('view_saved_materials');
           refreshSaves().catch(error => showToast(error.message, 'error'));
         }
+        if (!isEditor) {
+          hideMobileSelectionBar();
+          state.mobileOpen = false;
+        }
         closeKeywordPopover();
         closeMobileNav();
         syncEditorInteractionMode();
+        syncMobileShell();
       }
 
       function syncEditorStatusTag() { els.editorStatusTag.textContent = state.currentSavedId ? '保存済み教材を再編集中' : '本文編集エリア'; }
@@ -854,7 +1601,22 @@
       function moveGroupByDelta(groupId, delta) { const idx = state.prefs.groupOrder.indexOf(groupId); state.prefs = normalizePrefs({ ...state.prefs, groupOrder: moveItemInArray(state.prefs.groupOrder, idx, delta) }); savePrefs(state.prefs); }
       function moveActionByDelta(actionId, delta) { const action = ACTION_MAP.get(actionId); if (!action) return; const list = state.prefs.itemOrder[action.groupId] || []; const idx = list.indexOf(actionId); state.prefs = normalizePrefs({ ...state.prefs, itemOrder: { ...state.prefs.itemOrder, [action.groupId]: moveItemInArray(list, idx, delta) } }); savePrefs(state.prefs); }
 
-      function syncMobileShell() { const mobile = isMobileLayout(); document.body.classList.toggle('mobile-tools-open', mobile && state.mobileOpen); els.mobileToolBackdrop.hidden = !(mobile && state.mobileOpen); document.querySelectorAll('[data-mobile-tool]').forEach(button => { const key = button.dataset.mobileTool; button.classList.toggle('is-active', mobile && state.mobileOpen && (key === state.activeMobileTool || (key === 'all' && state.activeMobileTool === 'all'))); }); }
+      function syncMobileShell() {
+        const mobile = isMobileLayout();
+        const editorView = state.currentView === 'editor';
+        const canShowMobileTools = mobile && editorView;
+        if (!canShowMobileTools) {
+          state.mobileOpen = false;
+          hideMobileSelectionBar(true);
+        }
+        document.body.classList.toggle('mobile-tools-open', canShowMobileTools && state.mobileOpen);
+        els.mobileToolBackdrop.hidden = !(canShowMobileTools && state.mobileOpen);
+        if (els.mobileToolNav) els.mobileToolNav.hidden = !canShowMobileTools;
+        document.querySelectorAll('[data-mobile-tool]').forEach(button => {
+          const key = button.dataset.mobileTool;
+          button.classList.toggle('is-active', canShowMobileTools && state.mobileOpen && (key === state.activeMobileTool || (key === 'all' && state.activeMobileTool === 'all')));
+        });
+      }
       function closeMobilePanel() { state.mobileOpen = false; syncMobileShell(); }
       function openMobilePanel(groupId = 'all') { if (!isMobileLayout()) return; state.activeMobileTool = groupId; state.mobileOpen = true; syncMobileShell(); requestAnimationFrame(() => { const scrollBox = getScrollBox(); if (!scrollBox) return; if (groupId === 'all') { scrollBox.scrollTop = 0; return; } const target = els.toolbar.querySelector(`#tool-group-${groupId}`); if (!target) return; scrollBox.scrollTop = Math.max(0, target.offsetTop - 8); }); }
       function syncMobileNavShell() {
@@ -925,7 +1687,7 @@
       }
 
       function wireDragHandlers() {
-        if (isMobileLayout()) return;
+        if (isMobileLayout() || isTouchMode()) return;
         els.toolbar.querySelectorAll('[data-drag-handle="group"]').forEach(handle => {
           handle.addEventListener('dragstart', event => { if (!state.sortMode) { event.preventDefault(); return; } const groupId = handle.dataset.groupId; state.dragState = { type: 'group', groupId }; event.dataTransfer.effectAllowed = 'move'; requestAnimationFrame(() => handle.closest('.tool-group')?.classList.add('is-dragging')); });
           handle.addEventListener('dragend', () => { state.dragState = null; clearDropState(); });
@@ -949,8 +1711,136 @@
 
       // 画像はファイル選択・貼り付け・ドラッグ&ドロップの3経路で本文に挿入できる。
       function handleImagePicker(event) { const file = event.target.files?.[0]; if (!file) return; insertImageFile(file); event.target.value = ''; }
-      function insertImageFile(file) { const reader = new FileReader(); reader.onload = () => { pushUndo(); const img = document.createElement('img'); img.src = reader.result; img.alt = file.name || 'image'; insertImageAtCursor(img); addLog({ action: 'image-insert', fileName: file.name || 'image', time: nowIso() }); showToast('画像を追加しました。'); }; reader.readAsDataURL(file); }
-      function insertImageAtCursor(img) { const sel = window.getSelection(); if (!sel || sel.rangeCount === 0) { els.lessonContainer.appendChild(img); saveDraft(); return; } const range = sel.getRangeAt(0); range.deleteContents(); range.insertNode(img); range.setStartAfter(img); range.setEndAfter(img); sel.removeAllRanges(); sel.addRange(range); saveDraft(); }
+      function createImageAlignControls() {
+        const controls = document.createElement('span');
+        controls.className = 'image-align-controls';
+        controls.setAttribute('aria-label', '画像配置');
+        [
+          ['left', '左'],
+          ['center', '中'],
+          ['right', '右']
+        ].forEach(([align, label]) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'image-align-btn';
+          button.dataset.imageAlign = align;
+          button.textContent = label;
+          controls.appendChild(button);
+        });
+        return controls;
+      }
+      function ensureImageChrome(wrapper) {
+        if (!wrapper.querySelector('.image-align-controls')) wrapper.appendChild(createImageAlignControls());
+        if (!wrapper.querySelector('.image-resize-handle')) {
+          const handle = document.createElement('span');
+          handle.className = 'image-resize-handle';
+          handle.setAttribute('aria-hidden', 'true');
+          wrapper.appendChild(handle);
+        }
+      }
+      function createResizableImage(img) {
+        const wrapper = document.createElement('span');
+        wrapper.className = 'resizable-image image-align-center';
+        wrapper.contentEditable = 'false';
+        wrapper.style.width = img.getAttribute('width') ? `${img.getAttribute('width')}px` : (img.style.width || 'min(100%, 420px)');
+        wrapper.style.maxWidth = '100%';
+        img.removeAttribute('width');
+        img.removeAttribute('height');
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.objectFit = 'contain';
+        wrapper.appendChild(img);
+        ensureImageChrome(wrapper);
+        return wrapper;
+      }
+      function ensureResizableImages() {
+        els.lessonContainer.querySelectorAll('img').forEach(img => {
+          const existingWrapper = img.closest('.resizable-image');
+          if (existingWrapper) {
+            ensureImageChrome(existingWrapper);
+            existingWrapper.contentEditable = 'false';
+            existingWrapper.style.maxWidth = '100%';
+            if (!existingWrapper.classList.contains('image-align-left') && !existingWrapper.classList.contains('image-align-right')) {
+              existingWrapper.classList.add('image-align-center');
+            }
+            return;
+          }
+          img.replaceWith(createResizableImage(img.cloneNode(true)));
+        });
+      }
+      function setImageAlignment(wrapper, align) {
+        if (!wrapper) return;
+        pushUndo();
+        wrapper.classList.remove('image-align-left', 'image-align-center', 'image-align-right');
+        wrapper.classList.add(`image-align-${align}`);
+        els.lessonContainer.querySelectorAll('.resizable-image.is-selected').forEach(node => {
+          if (node !== wrapper) node.classList.remove('is-selected');
+        });
+        wrapper.classList.add('is-selected');
+        addLog({ action: 'image-align', align, time: nowIso() });
+        saveDraft();
+      }
+      function insertImageFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          pushUndo();
+          const img = document.createElement('img');
+          img.src = reader.result;
+          img.alt = file.name || 'image';
+          insertImageAtCursor(createResizableImage(img));
+          addLog({ action: 'image-insert', fileName: file.name || 'image', time: nowIso() });
+          showToast('画像を追加しました。');
+        };
+        reader.readAsDataURL(file);
+      }
+      function insertImageAtCursor(node) {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) {
+          els.lessonContainer.appendChild(node);
+          saveDraft();
+          return;
+        }
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        range.insertNode(node);
+        range.setStartAfter(node);
+        range.setEndAfter(node);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        saveDraft();
+      }
+      function startImageResize(event) {
+        const handle = event.target.closest('.image-resize-handle');
+        if (!handle) return;
+        const wrapper = handle.closest('.resizable-image');
+        if (!wrapper) return;
+        event.preventDefault();
+        event.stopPropagation();
+        pushUndo();
+        const rect = wrapper.getBoundingClientRect();
+        const containerRect = els.lessonContainer.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startWidth = rect.width;
+        const startHeight = rect.height;
+        const aspect = startWidth / Math.max(1, startHeight);
+        const maxWidth = Math.max(120, containerRect.width - 40);
+        function onMove(moveEvent) {
+          const delta = Math.max(moveEvent.clientX - startX, (moveEvent.clientY - startY) * aspect);
+          const nextWidth = Math.min(maxWidth, Math.max(80, startWidth + delta));
+          const nextHeight = Math.max(60, nextWidth / aspect);
+          wrapper.style.width = `${Math.round(nextWidth)}px`;
+          wrapper.style.height = `${Math.round(nextHeight)}px`;
+        }
+        function onUp() {
+          document.removeEventListener('pointermove', onMove);
+          document.removeEventListener('pointerup', onUp);
+          addLog({ action: 'image-resize', width: wrapper.style.width, height: wrapper.style.height, time: nowIso() });
+          saveDraft();
+        }
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp, { once: true });
+      }
 
       // 画面全体のイベント登録をここに集め、起動順を追いやすくしている。
       function bindEvents() {
@@ -985,6 +1875,7 @@
             syncMobileNavShell();
           }
         });
+        els.courseSelect?.addEventListener('change', handleEditorCourseChange);
         els.loadBtn.addEventListener('click', () => loadLessonById(els.lessonSelect.value));
         els.saveBtn.addEventListener('click', saveCurrentMaterial);
         els.savedSearchInput.addEventListener('input', renderSavedList); els.savedSortSelect.addEventListener('change', renderSavedList);
@@ -1032,7 +1923,7 @@
           if (wrapper) openKeywordPopover(wrapper);
           else closeKeywordPopover();
         }, true);
-        els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; renderToolbar(); });
+        els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; state.sortSelection = null; renderToolbar(); });
         els.importJsonBtn.addEventListener('click', () => els.importJsonInput.click());
         els.importJsonInput.addEventListener('change', async event => { const file = event.target.files?.[0]; if (!file) return; try { const text = await file.text(); const parsed = JSON.parse(text); const items = loadSaves(); const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed.saves) ? parsed.saves : [parsed]; const normalized = incoming.map(item => ({ id: item.id || `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, baseLessonId: item.baseLessonId || item.base_lesson_id || SAMPLE_LESSONS[0].id, title: item.title || 'Imported save', htmlContent: item.htmlContent || item.html_content || '', log: Array.isArray(item.log) ? item.log : [], createdAt: item.createdAt || item.created_at || nowIso(), updatedAt: item.updatedAt || item.updated_at || nowIso() })); saveSaves([...normalized, ...items]); renderSavedList(); showToast('JSON を取り込みました。'); } catch { showToast('JSON の取り込みに失敗しました。', 'error'); } finally { event.target.value = ''; } });
         els.exportAllBtn.addEventListener('click', exportAll); els.mobileExportBtn.addEventListener('click', () => { exportAll(); closeMobileNav(); }); els.resetDemoBtn.addEventListener('click', resetDemo);
@@ -1050,6 +1941,7 @@
           renderLessonSelect();
           els.lessonSelect.value = state.baseLessonId;
           els.lessonContainer.innerHTML = draft.html;
+          ensureResizableImages();
           els.titleDisplay.textContent = draft.title || findLessonTitle(state.baseLessonId);
           state.undoStack = [snapshot()]; state.redoStack = [];
           syncEditorStatusTag();
@@ -1160,9 +2052,25 @@
         return `<span class="mobile-sort-controls"><button type="button" class="mobile-sort-btn" data-mobile-move-kind="${kind}" data-mobile-move-id="${id}" data-mobile-move-delta="-1">↑</button><button type="button" class="mobile-sort-btn" data-mobile-move-kind="${kind}" data-mobile-move-id="${id}" data-mobile-move-delta="1">↓</button></span>`;
       }
 
+      function shouldUseStepSortControls() {
+        return isMobileLayout() || isTouchMode();
+      }
+
+      function isSortSelected(kind, id) {
+        return state.sortSelection?.kind === kind && String(state.sortSelection.id) === String(id);
+      }
+
+      function selectSortItem(kind, id) {
+        if (!state.sortMode || !shouldUseStepSortControls()) return;
+        state.sortSelection = { kind, id };
+        renderToolbar();
+      }
+
       function renderActionButton(action, groupId) {
         const activeClass = state.activeActionId === action.id ? ' is-active' : '';
-        return `<button type="button" class="tool-btn tool-btn--${action.tone || 'dark'}${activeClass}" data-action-id="${action.id}" data-group-id="${groupId}"><span class="tool-btn__drag" draggable="true" data-drag-handle="action" data-action-id="${action.id}" data-group-id="${groupId}">⋮⋮</span><span class="tool-btn__label">${action.label}</span><span class="tool-btn__hint">${action.hint || ''}</span>${state.sortMode && isMobileLayout() ? `<span class="tool-btn__sort">${renderMoveControls('action', action.id)}</span>` : ''}</button>`;
+        const selectedClass = isSortSelected('action', action.id) ? ' is-sort-selected' : '';
+        const draggable = isTouchMode() ? 'false' : 'true';
+        return `<button type="button" class="tool-btn tool-btn--${action.tone || 'dark'}${activeClass}${selectedClass}" data-action-id="${action.id}" data-group-id="${groupId}"><span class="tool-btn__drag" draggable="${draggable}" data-drag-handle="action" data-action-id="${action.id}" data-group-id="${groupId}">⋮⋮</span><span class="tool-btn__label">${action.label}</span><span class="tool-btn__hint">${action.hint || ''}</span></button>`;
       }
 
       function renderGroup(group) {
@@ -1171,13 +2079,15 @@
           ? `<div class="tool-group__inputs"><label class="toolbar-field"><span class="toolbar-field__label">キーワード <small>空なら非表示</small></span><input id="keywordText" class="toolbar-input" type="text" placeholder="例: ▽ / キーワードを入力"></label><label class="toolbar-field"><span class="toolbar-field__label">ポップアップテキスト</span><input id="popupText" class="toolbar-input" type="text" placeholder="例: 補足説明・語句の意味を入力"></label><label class="toolbar-field"><span class="toolbar-field__label">画像追加 <small>貼り付け/ドラッグも可</small></span><input id="imageInput" class="toolbar-input" type="file" accept="image/*"></label></div>`
           : '';
 
-        return `<section class="tool-group${items.length ? '' : ' is-empty'}" data-group-id="${group.id}" id="tool-group-${group.id}"><div class="tool-group__head"><div class="tool-group__head-main"><div class="tool-group__title-row"><div class="tool-group__title">${group.title}</div><div class="tool-group__meta">${group.meta}</div></div><div class="tool-group__subtitle">${group.subtitle}</div></div><div class="tool-group__head-actions">${state.sortMode && isMobileLayout() ? renderMoveControls('group', group.id) : ''}<span class="tool-group__drag" draggable="true" data-drag-handle="group" data-group-id="${group.id}">⋮⋮</span></div></div><div class="tool-group__body">${inputs}<div class="tool-group__buttons" data-group-id="${group.id}">${items.map(action => renderActionButton(action, group.id)).join('')}</div><div class="tool-group__empty">ここにボタンをドラッグ</div></div></section>`;
+        const selectedClass = isSortSelected('group', group.id) ? ' is-sort-selected' : '';
+        const draggable = isTouchMode() ? 'false' : 'true';
+        return `<section class="tool-group${items.length ? '' : ' is-empty'}${selectedClass}" data-group-id="${group.id}" id="tool-group-${group.id}"><div class="tool-group__head"><div class="tool-group__head-main"><div class="tool-group__title-row"><div class="tool-group__title">${group.title}</div><div class="tool-group__meta">${group.meta}</div></div><div class="tool-group__subtitle">${group.subtitle}</div></div><div class="tool-group__head-actions"><span class="tool-group__drag" draggable="${draggable}" data-drag-handle="group" data-group-id="${group.id}">⋮⋮</span></div></div><div class="tool-group__body">${inputs}<div class="tool-group__buttons" data-group-id="${group.id}">${items.map(action => renderActionButton(action, group.id)).join('')}</div><div class="tool-group__empty">ここにボタンをドラッグ</div></div></section>`;
       }
 
       function renderToolbar() {
         syncPrefsButton();
         els.toolbar.classList.toggle('is-sort-mode', state.sortMode);
-        els.toolbar.innerHTML = `${state.sortMode ? `<div class="toolbar-sort-banner"><div><div class="toolbar-sort-banner__title">並べ替えモード</div><div class="toolbar-sort-banner__meta">PC はドラッグ、スマホは ↑↓ で順番を変更できます。</div></div><button type="button" id="tbResetLayout" class="toolbar-reset-btn">初期配置に戻す</button></div>` : ''}<div class="tool-groups">${state.prefs.groupOrder.map(groupId => renderGroup(GROUP_MAP.get(groupId))).join('')}</div>`;
+        els.toolbar.innerHTML = `${state.sortMode ? `<div class="toolbar-sort-banner"><div><div class="toolbar-sort-banner__title">並べ替えモード</div><div class="toolbar-sort-banner__meta">${isTouchMode() ? '把手を長押しして、そのまま移動先へドラッグします。' : 'PC はドラッグで順番を変更できます。'}</div></div><button type="button" id="tbResetLayout" class="toolbar-reset-btn">初期配置に戻す</button></div>` : ''}<div class="tool-groups">${state.prefs.groupOrder.map(groupId => renderGroup(GROUP_MAP.get(groupId))).join('')}</div>`;
 
         const keywordInput = els.toolbar.querySelector('#keywordText');
         if (keywordInput) keywordInput.value = state.keywordDraft;
@@ -1185,16 +2095,192 @@
         if (popupInput) popupInput.value = state.popupDraft;
 
         restoreScroll();
-        els.toolbar.querySelectorAll('.tool-btn').forEach(button => button.addEventListener('click', event => { if (state.sortMode) { if (event.target.closest('[data-mobile-move-kind]')) return; return; } triggerAction(button.dataset.actionId); }));
-        els.toolbar.querySelectorAll('[data-mobile-move-kind]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); rememberScroll(); const kind = button.dataset.mobileMoveKind; const id = button.dataset.mobileMoveId; const delta = Number(button.dataset.mobileMoveDelta || 0); if (kind === 'group') moveGroupByDelta(id, delta); if (kind === 'action') moveActionByDelta(id, delta); renderToolbar(); }));
+        els.toolbar.querySelectorAll('.tool-group__head').forEach(head => head.addEventListener('click', event => {
+          if (state.sortMode) event.preventDefault();
+        }));
+        els.toolbar.querySelectorAll('.tool-btn').forEach(button => button.addEventListener('click', event => {
+          if (state.sortMode) {
+            event.preventDefault();
+            return;
+          }
+          triggerAction(button.dataset.actionId);
+        }));
         els.toolbar.querySelector('#tbResetLayout')?.addEventListener('click', () => { state.prefs = clone(DEFAULT_PREFS); savePrefs(state.prefs); state.lastScrollTop = 0; renderToolbar(); });
         els.toolbar.querySelector('#imageInput')?.addEventListener('change', handleImagePicker);
         const scrollBox = getScrollBox();
         scrollBox?.addEventListener('scroll', () => state.lastScrollTop = scrollBox.scrollTop, { passive: true });
         wireDragHandlers();
+        wireTouchSortHandlers();
         syncMobileShell();
         syncMobileNavShell();
         syncActiveButtons();
+      }
+
+      function wireTouchSortHandlers() {
+        if (!isTouchMode()) return;
+        els.toolbar.querySelectorAll('[data-drag-handle]').forEach(handle => {
+          handle.addEventListener('pointerdown', startTouchSortPress, { passive: false });
+        });
+      }
+
+      function startTouchSortPress(event) {
+        if (!state.sortMode || !event.isPrimary) return;
+        const handle = event.currentTarget;
+        const type = handle.dataset.dragHandle;
+        const sourceEl = type === 'group' ? handle.closest('.tool-group') : handle.closest('.tool-btn');
+        if (!sourceEl) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handle.setPointerCapture?.(event.pointerId);
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const drag = {
+          type,
+          pointerId: event.pointerId,
+          handle,
+          sourceEl,
+          sourceId: type === 'group' ? handle.dataset.groupId : handle.dataset.actionId,
+          pressTimer: null,
+          dragging: false,
+          ghost: null,
+          indicator: null,
+          targetGroupId: null,
+          targetActionId: null,
+          targetEl: null,
+          placeBefore: true
+        };
+        state.touchSortState = drag;
+        drag.pressTimer = setTimeout(() => beginTouchSortDrag(startX, startY), 180);
+
+        drag.onMove = moveEvent => {
+          if (moveEvent.pointerId !== drag.pointerId) return;
+          moveEvent.preventDefault();
+          const moved = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+          if (!drag.dragging && moved > 8) beginTouchSortDrag(moveEvent.clientX, moveEvent.clientY);
+          if (drag.dragging) updateTouchSortDrag(moveEvent.clientX, moveEvent.clientY);
+        };
+        drag.onUp = upEvent => {
+          if (upEvent.pointerId !== drag.pointerId) return;
+          upEvent.preventDefault();
+          endTouchSort(drag.dragging);
+        };
+        drag.onCancel = () => endTouchSort(false);
+        window.addEventListener('pointermove', drag.onMove, { passive: false });
+        window.addEventListener('pointerup', drag.onUp, { passive: false });
+        window.addEventListener('pointercancel', drag.onCancel, { passive: false });
+      }
+
+      function beginTouchSortDrag(clientX, clientY) {
+        const drag = state.touchSortState;
+        if (!drag || drag.dragging) return;
+        clearTimeout(drag.pressTimer);
+        drag.dragging = true;
+        document.body.classList.add('touch-sorting');
+        drag.sourceEl.classList.add('is-touch-sort-source');
+        drag.ghost = drag.sourceEl.cloneNode(true);
+        drag.ghost.classList.add('touch-sort-ghost');
+        drag.ghost.style.width = `${Math.round(drag.sourceEl.getBoundingClientRect().width)}px`;
+        drag.indicator = document.createElement('div');
+        drag.indicator.className = 'touch-sort-indicator';
+        drag.indicator.hidden = true;
+        document.body.appendChild(drag.ghost);
+        document.body.appendChild(drag.indicator);
+        updateTouchSortDrag(clientX, clientY);
+      }
+
+      function updateTouchSortDrag(clientX, clientY) {
+        const drag = state.touchSortState;
+        if (!drag?.dragging) return;
+        drag.ghost.style.left = `${Math.round(clientX + 12)}px`;
+        drag.ghost.style.top = `${Math.round(clientY + 12)}px`;
+        if (drag.type === 'group') updateTouchGroupTarget(clientY);
+        else updateTouchActionTarget(clientX, clientY);
+        positionTouchSortIndicator();
+      }
+
+      function updateTouchGroupTarget(clientY) {
+        const drag = state.touchSortState;
+        const groups = Array.from(els.toolbar.querySelectorAll('.tool-group')).filter(node => node !== drag.sourceEl);
+        const target = groups.find(node => {
+          const rect = node.getBoundingClientRect();
+          return clientY >= rect.top && clientY <= rect.bottom;
+        }) || groups.reduce((best, node) => {
+          const rect = node.getBoundingClientRect();
+          const distance = Math.abs(clientY - (rect.top + rect.height / 2));
+          return !best || distance < best.distance ? { node, distance } : best;
+        }, null)?.node;
+        if (!target) return;
+        const rect = target.getBoundingClientRect();
+        drag.targetGroupId = target.dataset.groupId;
+        drag.targetEl = target;
+        drag.placeBefore = clientY < rect.top + rect.height / 2;
+      }
+
+      function updateTouchActionTarget(clientX, clientY) {
+        const drag = state.touchSortState;
+        const group = document.elementFromPoint(clientX, clientY)?.closest('.tool-group')
+          || Array.from(els.toolbar.querySelectorAll('.tool-group')).reduce((best, node) => {
+            const rect = node.getBoundingClientRect();
+            const distance = Math.abs(clientY - (rect.top + rect.height / 2));
+            return !best || distance < best.distance ? { node, distance } : best;
+          }, null)?.node;
+        if (!group) return;
+        const buttons = Array.from(group.querySelectorAll('.tool-btn')).filter(node => node !== drag.sourceEl);
+        const target = buttons.find(node => {
+          const rect = node.getBoundingClientRect();
+          return clientY >= rect.top && clientY <= rect.bottom;
+        }) || null;
+        drag.targetGroupId = group.dataset.groupId;
+        drag.targetEl = target || group.querySelector('.tool-group__buttons') || group;
+        if (target) {
+          const rect = target.getBoundingClientRect();
+          drag.targetActionId = target.dataset.actionId;
+          drag.placeBefore = clientY < rect.top + rect.height / 2;
+        } else {
+          drag.targetActionId = null;
+          drag.placeBefore = false;
+        }
+      }
+
+      function positionTouchSortIndicator() {
+        const drag = state.touchSortState;
+        if (!drag?.indicator || !drag.targetEl) return;
+        const rect = drag.targetEl.getBoundingClientRect();
+        const top = drag.type === 'action' && !drag.targetActionId
+          ? rect.bottom - 2
+          : drag.placeBefore ? rect.top : rect.bottom;
+        drag.indicator.style.left = `${Math.round(rect.left)}px`;
+        drag.indicator.style.top = `${Math.round(top)}px`;
+        drag.indicator.style.width = `${Math.round(rect.width)}px`;
+        drag.indicator.hidden = false;
+      }
+
+      function endTouchSort(commit) {
+        const drag = state.touchSortState;
+        if (!drag) return;
+        clearTimeout(drag.pressTimer);
+        window.removeEventListener('pointermove', drag.onMove);
+        window.removeEventListener('pointerup', drag.onUp);
+        window.removeEventListener('pointercancel', drag.onCancel);
+        drag.handle?.releasePointerCapture?.(drag.pointerId);
+        document.body.classList.remove('touch-sorting');
+        drag.sourceEl?.classList.remove('is-touch-sort-source');
+        drag.ghost?.remove();
+        drag.indicator?.remove();
+        if (commit && drag.targetGroupId) {
+          rememberScroll();
+          if (drag.type === 'group' && drag.targetGroupId !== drag.sourceId) {
+            state.prefs = moveGroup(state.prefs, drag.sourceId, drag.targetGroupId, drag.placeBefore);
+            savePrefs(state.prefs);
+          }
+          if (drag.type === 'action') {
+            state.prefs = moveAction(state.prefs, drag.sourceId, drag.targetGroupId, drag.targetActionId, drag.placeBefore);
+            savePrefs(state.prefs);
+          }
+          state.sortSelection = null;
+          renderToolbar();
+        }
+        state.touchSortState = null;
       }
 
       function bindTouchSelectionButton(button, handler) {
@@ -1215,6 +2301,23 @@
       }
 
       function handleLessonContainerClick(event) {
+        const alignBtn = event.target.closest('[data-image-align]');
+        if (alignBtn) {
+          event.preventDefault();
+          event.stopPropagation();
+          const wrapper = alignBtn.closest('.resizable-image');
+          setImageAlignment(wrapper, alignBtn.dataset.imageAlign || 'center');
+          return;
+        }
+        const imageWrapper = event.target.closest('.resizable-image');
+        els.lessonContainer.querySelectorAll('.resizable-image.is-selected').forEach(node => {
+          if (node !== imageWrapper) node.classList.remove('is-selected');
+        });
+        if (imageWrapper) {
+          imageWrapper.classList.add('is-selected');
+          closeKeywordPopover();
+          return;
+        }
         const btn = event.target.closest('.keyword-toggle');
         if (btn) {
           event.preventDefault();
@@ -1331,6 +2434,76 @@
         }
       }
 
+      async function handleEditorCourseChange() {
+        const courseId = Number(els.courseSelect?.value || 0);
+        if (!courseId) {
+          state.currentCourseId = null;
+          state.courseMaterialsCache = [];
+          state.currentLessonId = null;
+          renderLessonSelect();
+          return;
+        }
+        state.currentCourseId = courseId;
+        state.currentLessonId = null;
+        state.currentSavedId = null;
+        try {
+          await refreshCourseMaterials(courseId);
+        } catch (error) {
+          showToast(error.message, 'error');
+        }
+      }
+
+      async function handleCourseActionClick(event) {
+        const btn = event.target.closest('[data-course-action]');
+        if (!btn) return false;
+        const action = btn.dataset.courseAction;
+        const role = state.currentUser?.role || 'student';
+        if (action === 'new-course') {
+          openCourseDialog();
+          return true;
+        }
+        if (action === 'edit-course') {
+          const course = (state.coursesCache || []).find(item => String(item.id) === String(btn.dataset.id));
+          if (course) openCourseDialog(course);
+          return true;
+        }
+        if (action === 'delete-course') {
+          await deleteCourse(btn.dataset.id);
+          return true;
+        }
+        const courseId = Number(btn.dataset.id || state.currentCourseId);
+        if (courseId) {
+          state.currentCourseId = courseId;
+          await refreshCourseMaterials(state.currentCourseId);
+        }
+        if (action === 'focus') {
+          renderCourseList();
+          return true;
+        }
+        if (action === 'open') {
+          setView(role === 'student' ? 'editor' : 'materials');
+          return true;
+        }
+        if (action === 'open-material') {
+          loadLessonById(btn.dataset.id);
+          setView('editor');
+          return true;
+        }
+        if (action === 'manage-materials') {
+          setView('materials');
+          return true;
+        }
+        if (action === 'new-material') {
+          if (!SAMPLE_LESSONS[0]) return true;
+          loadLessonById(SAMPLE_LESSONS[0].id, { silent: true });
+          state.currentSavedId = null;
+          showToast('現在の授業向けにベース教材を読み込みました。新しい教材として保存してください。');
+          setView('editor');
+          return true;
+        }
+        return true;
+      }
+
       function bindEvents() {
         renderLessonSelect();
         renderToolbar();
@@ -1348,13 +2521,57 @@
         els.mobileNavDialog.addEventListener('cancel', event => { event.preventDefault(); closeMobileNav(); });
         els.mobileNavDialog.addEventListener('close', () => { els.mobileNavDialog.classList.remove('is-open', 'is-closing'); if (state.mobileNavOpen) { state.mobileNavOpen = false; syncMobileNavShell(); } });
 
+        els.courseSelect?.addEventListener('change', handleEditorCourseChange);
         els.loadBtn.addEventListener('click', () => loadLessonById(els.lessonSelect.value));
         els.saveBtn.addEventListener('click', saveCurrentMaterial);
         els.savedSearchInput.addEventListener('input', renderSavedList);
         els.savedSortSelect.addEventListener('change', renderSavedList);
         els.savedList.addEventListener('click', handleSavedListClick);
+        els.courseList?.addEventListener('click', async event => {
+          await handleCourseActionClick(event);
+        });
+        els.courseWorkspace?.addEventListener('click', async event => {
+          const previewBtn = event.target.closest('[data-saved-action]');
+          if (previewBtn) return handleSavedListClick(event);
+          const materialBtn = event.target.closest('[data-material-action]');
+          if (materialBtn?.dataset.materialAction === 'edit') return openTeacherMaterial(materialBtn.dataset.id);
+          await handleCourseActionClick(event);
+        });
+        els.joinCourseBtn?.addEventListener('click', joinCourse);
+        els.createCourseBtn?.addEventListener('click', createCourse);
+        els.confirmCourseDialogBtn?.addEventListener('click', submitCourseDialog);
+        els.cancelCourseDialogBtn?.addEventListener('click', closeCourseDialog);
+        els.courseDialogBackdrop?.addEventListener('click', event => { if (event.target === els.courseDialogBackdrop) closeCourseDialog(); });
+        [els.courseDialogNameInput, els.courseDialogSemesterInput, els.courseDialogDescriptionInput].forEach(input => {
+          input?.addEventListener('keydown', event => {
+            if (event.key === 'Escape') { event.preventDefault(); closeCourseDialog(); }
+            if (event.key === 'Enter' && event.target !== els.courseDialogDescriptionInput) { event.preventDefault(); submitCourseDialog(); }
+          });
+        });
+        els.teacherMaterialList?.addEventListener('click', event => {
+          const viewBtn = event.target.closest('[data-view]');
+          if (viewBtn) {
+            setView(viewBtn.dataset.view);
+            return;
+          }
+          const courseBtn = event.target.closest('[data-course-action]');
+          if (courseBtn) return void handleCourseActionClick(event);
+          const savedBtn = event.target.closest('[data-saved-action]');
+          if (savedBtn) return handleSavedListClick(event);
+          const btn = event.target.closest('[data-material-action]');
+          if (!btn) return;
+          if (btn.dataset.materialAction === 'edit') return openTeacherMaterial(btn.dataset.id);
+          if (btn.dataset.materialAction === 'toggle-status') return toggleMaterialStatus(btn.dataset.id, btn.dataset.status);
+          if (btn.dataset.materialAction === 'works') return renderWorksForMaterial(btn.dataset.id);
+        });
+        els.workList?.addEventListener('click', event => {
+          const btn = event.target.closest('[data-material-action]');
+          if (!btn) return;
+          if (btn.dataset.materialAction === 'clear-works') renderWorksPlaceholder();
+        });
 
         els.lessonContainer.addEventListener('click', handleLessonContainerClick);
+        els.lessonContainer.addEventListener('pointerdown', startImageResize);
         els.lessonContainer.addEventListener('mouseup', handleEditorMouseUp);
         els.lessonContainer.addEventListener('beforeinput', handleEditorBeforeInput, { capture: true });
         els.lessonContainer.addEventListener('input', () => { state.draftChangedAt = nowIso(); saveDraft(); });
@@ -1389,7 +2606,7 @@
             showToast('加工モードに戻りました。');
           }
         });
-        els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; renderToolbar(); });
+        els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; state.sortSelection = null; renderToolbar(); });
         els.importJsonBtn.addEventListener('click', () => els.importJsonInput.click());
         els.importJsonInput.addEventListener('change', handleImportJsonChange);
         els.exportAllBtn?.addEventListener('click', exportAll);
@@ -1432,6 +2649,7 @@
           renderLessonSelect();
           els.lessonSelect.value = state.baseLessonId;
           els.lessonContainer.innerHTML = draft.html;
+          ensureResizableImages();
           els.titleDisplay.textContent = draft.title || findLessonTitle(state.baseLessonId);
           state.undoStack = [snapshot()];
           state.redoStack = [];
@@ -1450,7 +2668,7 @@
       initFromDraft();
       initAuth();
       renderSavedList();
-      setView('editor');
+      setView('courses');
       syncEditorStatusTag();
 
     })();

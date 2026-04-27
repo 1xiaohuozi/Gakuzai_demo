@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const db = require('./db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
 const TOKEN_EXPIRES_IN = '7d';
@@ -21,9 +22,17 @@ function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
+    const user = db.prepare(
+      'SELECT id, email, display_name, role FROM users WHERE id = ?'
+    ).get(Number(payload.sub));
+    if (!user) {
+      return res.status(401).json({ error: 'User no longer exists.' });
+    }
     req.user = {
-      id: Number(payload.sub),
-      email: payload.email
+      id: Number(user.id),
+      email: user.email,
+      displayName: user.display_name || '',
+      role: user.role || 'student'
     };
     next();
   } catch {
@@ -31,7 +40,17 @@ function requireAuth(req, res, next) {
   }
 }
 
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Permission denied.' });
+    }
+    next();
+  };
+}
+
 module.exports = {
   signToken,
-  requireAuth
+  requireAuth,
+  requireRole
 };

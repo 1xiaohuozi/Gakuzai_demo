@@ -1,16 +1,20 @@
 const fs = require('fs');
 const path = require('path');
-const initSqlJs = require('sql.js');
+const Database = require('better-sqlite3');
 
-const dataDir = path.join(__dirname, 'data');
-const dbPath = path.join(dataDir, 'gakuzai.sqlite');
+const workspaceDataDir = path.join(__dirname, 'data');
+const defaultDataDir = process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, 'GakuzaiDemo')
+  : workspaceDataDir;
+const dataDir = process.env.GAKUZAI_DATA_DIR || defaultDataDir;
+const dbPath = process.env.GAKUZAI_DB_PATH || path.join(dataDir, 'gakuzai.sqlite');
+const legacyDbPath = path.join(workspaceDataDir, 'gakuzai.sqlite');
+const schemaPath = path.join(__dirname, 'schema.sql');
+
 fs.mkdirSync(dataDir, { recursive: true });
-
-const SQL = initSqlJs({
-  locateFile: file => require.resolve(`sql.js/dist/${file}`)
-});
-
-const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+if (!fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
+  fs.copyFileSync(legacyDbPath, dbPath);
+}
 
 let db;
 
@@ -25,56 +29,50 @@ function getParams(args) {
   return args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
 }
 
-function persist() {
-  const data = getDb().export();
-  fs.writeFileSync(dbPath, Buffer.from(data));
+function columnExists(table, column) {
+  const rows = getDb().prepare(`PRAGMA table_info(${table})`).all();
+  return rows.some(row => row.name === column);
+}
+
+function migrate() {
+  const statements = [];
+  if (!columnExists('users', 'role')) {
+    statements.push("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'student'");
+  }
+  if (!columnExists('materials', 'course_id')) {
+    statements.push('ALTER TABLE materials ADD COLUMN course_id INTEGER');
+  }
+  if (!columnExists('materials', 'status')) {
+    statements.push("ALTER TABLE materials ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'");
+  }
+  for (const sql of statements) {
+    getDb().exec(sql);
+  }
+  getDb().exec(
+    'CREATE INDEX IF NOT EXISTS idx_materials_course_status ON materials (course_id, status, updated_at DESC)'
+  );
 }
 
 async function initDb() {
-  const SqlJs = await SQL;
-  db = fs.existsSync(dbPath)
-    ? new SqlJs.Database(fs.readFileSync(dbPath))
-    : new SqlJs.Database();
-  db.exec('PRAGMA foreign_keys = ON;');
-  db.exec(schema);
-  persist();
+  db = new Database(dbPath, { timeout: 5000 });
+  db.pragma('foreign_keys = ON');
+  db.exec(fs.readFileSync(schemaPath, 'utf8'));
+  migrate();
 }
 
 function prepare(sql) {
   return {
     get(...args) {
-      const stmt = getDb().prepare(sql);
-      try {
-        stmt.bind(getParams(args));
-        return stmt.step() ? stmt.getAsObject() : undefined;
-      } finally {
-        stmt.free();
-      }
+      return getDb().prepare(sql).get(...getParams(args));
     },
     all(...args) {
-      const stmt = getDb().prepare(sql);
-      const rows = [];
-      try {
-        stmt.bind(getParams(args));
-        while (stmt.step()) rows.push(stmt.getAsObject());
-        return rows;
-      } finally {
-        stmt.free();
-      }
+      return getDb().prepare(sql).all(...getParams(args));
     },
     run(...args) {
-      const stmt = getDb().prepare(sql);
-      try {
-        stmt.run(getParams(args));
-      } finally {
-        stmt.free();
-      }
-      const lastId = getDb().exec('SELECT last_insert_rowid() AS id')[0]?.values?.[0]?.[0] || 0;
-      const changes = getDb().exec('SELECT changes() AS changes')[0]?.values?.[0]?.[0] || 0;
-      persist();
+      const result = getDb().prepare(sql).run(...getParams(args));
       return {
-        changes,
-        lastInsertRowid: lastId
+        changes: result.changes,
+        lastInsertRowid: Number(result.lastInsertRowid || 0)
       };
     }
   };

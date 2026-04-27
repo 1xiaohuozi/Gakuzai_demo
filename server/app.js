@@ -8,9 +8,11 @@ const rateLimit = require('express-rate-limit');
 const { initDb } = require('./db');
 
 const authRoutes = require('./routes/auth.routes');
+const courseRoutes = require('./routes/courses.routes');
 const materialRoutes = require('./routes/materials.routes');
 const eventRoutes = require('./routes/events.routes');
 const settingRoutes = require('./routes/settings.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -28,9 +30,11 @@ app.use('/api/', rateLimit({
 }));
 
 app.use('/api/auth', authRoutes);
+app.use('/api/courses', courseRoutes);
 app.use('/api/materials', materialRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/settings', settingRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use(express.static(publicRoot, {
   extensions: ['html'],

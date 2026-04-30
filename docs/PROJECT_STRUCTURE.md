@@ -5,7 +5,11 @@
 This project is a self-hosted teaching-material editor.
 The login page is separated from the editor page, and user data is stored in a local SQLite database through an Express API.
 
+## database in window
+C:\Users\hallo\AppData\Local\GakuzaiDemo\gakuzai.sqlite
+
 ## Directory Layout
+
 
 ```text
 Gakuzai_demo/

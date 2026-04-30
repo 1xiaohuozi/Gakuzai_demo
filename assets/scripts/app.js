@@ -45,6 +45,8 @@
       const MOBILE_BREAKPOINT = 960;
       const TABLET_PORTRAIT_BREAKPOINT = 1100;
       const UNDO_MAX = 50;
+      const STUDENT_AUTO_SAVE_DEBOUNCE_MS = 8000;
+      const STUDENT_AUTO_SAVE_INTERVAL_MS = 60000;
 
       // 起動時に主要な DOM をまとめて参照しておく。
       const els = {
@@ -79,6 +81,7 @@
         toolbarPrefsBtn: document.getElementById('toolbarPrefsBtn'),
         mobileToolBackdrop: document.getElementById('mobileToolBackdrop'),
         mobileToolNav: document.querySelector('.mobile-tool-nav'),
+        mobileUndoBtn: document.getElementById('mobileUndoBtn'),
         mobileToolCloseBtn: document.getElementById('mobileToolCloseBtn'),
         mobileNavDialog: document.getElementById('mobileNavDialog'),
         mobileNavDrawer: document.getElementById('mobileNavDrawer'),
@@ -187,7 +190,14 @@
         editingCourseId: null,
         savesCache: [],
         saveDialogResolver: null,
-        confirmDialogResolver: null
+        confirmDialogResolver: null,
+        studentAutoSaveDirty: false,
+        studentAutoSaveTimer: null,
+        studentAutoSaveInterval: null,
+        studentAutoSaveInFlight: false,
+        studentAutoSaveQueued: false,
+        studentLastAutoSavedAt: null,
+        studentLastAutoSaveErrorAt: null
       };
       let mobileNavCloseTimer = null;
 
@@ -224,6 +234,7 @@
           els.editorModeBtn.setAttribute('aria-pressed', String(editable));
           els.editorModeBtn.textContent = editable ? '編集完了' : '本文編集';
         }
+        syncMobileUndoButton();
       }
       function loadSidebarCollapsed() { try { return localStorage.getItem(STORAGE_KEYS.sidebar) === '1'; } catch { return false; } }
       function saveSidebarCollapsed(collapsed) { try { localStorage.setItem(STORAGE_KEYS.sidebar, collapsed ? '1' : '0'); } catch { } }
@@ -239,12 +250,147 @@
         if (label) label.textContent = collapsed ? 'サイドバーを展開する' : 'サイドバーを折りたたむ';
       }
       function isTouchMode() { return window.matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints || 0) > 0; }
-      function showToast(msg, type = 'success') { const t = document.createElement('div'); t.className = `toast ${type === 'success' ? 'success' : type === 'warn' ? 'warn' : type === 'error' ? 'error' : ''}`; t.textContent = msg; els.toastWrap.appendChild(t); setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateY(8px)'; setTimeout(() => t.remove(), 220); }, 2600); }
+      function showToast(msg, type = 'success', options = {}) {
+        const t = document.createElement('div');
+        t.className = `toast ${type === 'success' ? 'success' : type === 'warn' ? 'warn' : type === 'error' ? 'error' : ''}`;
+        const text = document.createElement('span');
+        text.textContent = msg;
+        t.appendChild(text);
+        if (options.actionLabel && typeof options.onAction === 'function') {
+          const action = document.createElement('button');
+          action.type = 'button';
+          action.className = 'toast__action';
+          action.textContent = options.actionLabel;
+          action.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            options.onAction();
+            t.remove();
+          });
+          t.appendChild(action);
+        }
+        els.toastWrap.appendChild(t);
+        setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateY(8px)'; setTimeout(() => t.remove(), 220); }, options.duration || 2600);
+      }
+      function canUndo() { return state.undoStack.length > 1; }
+      function syncMobileUndoButton() {
+        if (!els.mobileUndoBtn) return;
+        const visible = isTouchMode() && state.currentView === 'editor';
+        els.mobileUndoBtn.hidden = !visible;
+        els.mobileUndoBtn.disabled = !canUndo();
+      }
+      function showUndoToast(message = '変更しました。') {
+        syncMobileUndoButton();
+        if (!isTouchMode() || state.currentView !== 'editor' || !canUndo()) return;
+        showToast(message, 'success', { actionLabel: '元に戻す', onAction: performMobileUndo, duration: 4200 });
+      }
       function loadSaves() { return state.savesCache || []; }
       function saveSaves(items) { state.savesCache = Array.isArray(items) ? items : []; }
       function saveDraft() { localStorage.setItem(STORAGE_KEYS.draft, JSON.stringify({ currentLessonId: state.currentLessonId, baseLessonId: state.baseLessonId, currentSavedId: state.currentSavedId, html: els.lessonContainer.innerHTML, title: els.titleDisplay.textContent, log: state.log, draftChangedAt: state.draftChangedAt })); syncEditorStatusTag(); }
       function loadDraft() { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.draft) || 'null'); } catch { return null; } }
       function clearDraft() { localStorage.removeItem(STORAGE_KEYS.draft); }
+      function isStudentEditingMaterial() {
+        return (state.currentUser?.role || 'student') === 'student'
+          && state.currentView === 'editor'
+          && !!state.currentSavedId
+          && !!state.baseLessonId;
+      }
+      function getStudentWorkPayload() {
+        return {
+          editedContent: els.lessonContainer.innerHTML,
+          operationLogs: clone(state.log)
+        };
+      }
+      function markStudentAutoSaveDirty() {
+        if (!isStudentEditingMaterial()) return;
+        state.studentAutoSaveDirty = true;
+        syncEditorStatusTag();
+        clearTimeout(state.studentAutoSaveTimer);
+        state.studentAutoSaveTimer = setTimeout(() => {
+          flushStudentAutoSave({ silent: true, reason: 'debounce' });
+        }, STUDENT_AUTO_SAVE_DEBOUNCE_MS);
+      }
+      function clearStudentAutoSaveState() {
+        state.studentAutoSaveDirty = false;
+        clearTimeout(state.studentAutoSaveTimer);
+        state.studentAutoSaveTimer = null;
+        syncEditorStatusTag();
+      }
+      function updateStudentWorkCache(saved) {
+        if (!saved) return;
+        state.courseMaterialsCache = (state.courseMaterialsCache || []).map(item => String(item.id) === String(saved.id) ? saved : item);
+        saveSaves(state.courseMaterialsCache);
+      }
+      async function saveStudentWork({ silent = false } = {}) {
+        if (!state.currentSavedId) {
+          if (!silent) showToast('授業教材がまだ読み込まれていません。', 'warn');
+          return false;
+        }
+        if (state.studentAutoSaveInFlight) {
+          state.studentAutoSaveQueued = true;
+          if (!silent) showToast('保存中です。しばらくお待ちください。', 'warn');
+          return false;
+        }
+        state.studentAutoSaveInFlight = true;
+        try {
+          const data = await apiRequest(`/api/materials/${state.currentSavedId}/work`, {
+            method: 'POST',
+            body: JSON.stringify(getStudentWorkPayload())
+          });
+          updateStudentWorkCache(data.material);
+          state.draftChangedAt = nowIso();
+          state.studentLastAutoSavedAt = state.draftChangedAt;
+          state.studentAutoSaveDirty = false;
+          saveDraft();
+          renderSavedList();
+          if (!silent) showToast('自分の加工結果を保存しました。');
+          return true;
+        } catch (error) {
+          const previousErrorAt = state.studentLastAutoSaveErrorAt ? new Date(state.studentLastAutoSaveErrorAt).getTime() : 0;
+          state.studentLastAutoSaveErrorAt = nowIso();
+          if (!silent) showToast(error.message, 'error');
+          else if (Date.now() - previousErrorAt > STUDENT_AUTO_SAVE_INTERVAL_MS) showToast('自動保存に失敗しました。手動で保存してください。', 'error');
+          return false;
+        } finally {
+          state.studentAutoSaveInFlight = false;
+          if (state.studentAutoSaveQueued) {
+            state.studentAutoSaveQueued = false;
+            flushStudentAutoSave({ silent: true, reason: 'queued' });
+          }
+          syncEditorStatusTag();
+        }
+      }
+      function sendStudentWorkKeepalive() {
+        if (!state.authToken || !state.currentSavedId || !state.studentAutoSaveDirty) return;
+        state.draftChangedAt = nowIso();
+        saveDraft();
+        const body = JSON.stringify(getStudentWorkPayload());
+        fetch(`/api/materials/${state.currentSavedId}/work`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${state.authToken}`
+          },
+          body,
+          keepalive: true
+        }).catch(() => {});
+      }
+      function flushStudentAutoSave({ silent = true, keepalive = false, reason = 'manual' } = {}) {
+        if (!isStudentEditingMaterial() || !state.studentAutoSaveDirty) return Promise.resolve(false);
+        clearTimeout(state.studentAutoSaveTimer);
+        state.studentAutoSaveTimer = null;
+        if (keepalive) {
+          sendStudentWorkKeepalive();
+          return Promise.resolve(true);
+        }
+        return saveStudentWork({ silent, reason });
+      }
+      function startStudentAutoSaveLoop() {
+        clearInterval(state.studentAutoSaveInterval);
+        state.studentAutoSaveInterval = setInterval(() => {
+          flushStudentAutoSave({ silent: true, reason: 'interval' });
+        }, STUDENT_AUTO_SAVE_INTERVAL_MS);
+      }
       function setAuthSession(token, user) {
         state.authToken = token || '';
         state.currentUser = user || null;
@@ -269,6 +415,37 @@
           node.hidden = loggedIn && !allowed;
         });
       }
+      function translateApiError(message) {
+        const text = String(message || '');
+        const exact = {
+          'Internal server error.': 'サーバーでエラーが発生しました。',
+          'Authentication required.': 'ログインしてください。',
+          'User no longer exists.': 'ユーザーが見つかりません。',
+          'Invalid or expired token.': 'ログインの有効期限が切れています。もう一度ログインしてください。',
+          'Permission denied.': 'この操作を行う権限がありません。',
+          'Too many registration attempts. Please try again later.': '登録の試行回数が多すぎます。しばらくしてからもう一度お試しください。',
+          'Valid email is required.': '正しいメールアドレスを入力してください。',
+          'Password must be at least 8 characters.': 'パスワードは8文字以上で入力してください。',
+          'Email is already registered.': 'このメールアドレスはすでに登録されています。',
+          'Invalid email or password.': 'メールアドレスまたはパスワードが正しくありません。',
+          'eventType is required.': 'イベント種別が指定されていません。',
+          'Course name is required.': '授業名を入力してください。',
+          'Valid teacher is required.': '有効な教師アカウントが必要です。',
+          'Invite code is required.': '授業コードを入力してください。',
+          'Course not found for this code.': 'この授業コードに一致する授業が見つかりません。',
+          'You have already joined this course.': 'この授業にはすでに参加しています。',
+          'Course not found.': '授業が見つかりません。',
+          'Material not found.': '教材が見つかりません。',
+          'courseId, title and baseLessonId are required.': '授業・教材名・ベース教材を指定してください。',
+          'Status must be draft or published.': '教材の状態が正しくありません。',
+          'Setting key is required.': '設定キーが指定されていません。'
+        };
+        if (exact[text]) return exact[text];
+        const wait = text.match(/^Too many attempts\. Please try again in (\d+) minute\(s\)\.$/);
+        if (wait) return `試行回数が多すぎます。${wait[1]}分後にもう一度お試しください。`;
+        if (/[A-Za-z]/.test(text)) return '通信に失敗しました。';
+        return text || '通信に失敗しました。';
+      }
       async function apiRequest(path, options = {}) {
         const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
         if (state.authToken) headers.Authorization = `Bearer ${state.authToken}`;
@@ -277,7 +454,7 @@
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
           if (response.status === 401) setAuthSession('', null);
-          throw new Error(data.error || 'API request failed.');
+          throw new Error(translateApiError(data.error) || '通信に失敗しました。');
         }
         return data;
       }
@@ -925,7 +1102,7 @@
         });
       }
       function resolveSaveDialog(value) { closeModal(els.saveDialogBackdrop); const resolver = state.saveDialogResolver; state.saveDialogResolver = null; if (resolver) resolver(value); }
-      function confirmAction({ title, message, confirmLabel = 'OK' }) {
+      function confirmAction({ title, message, confirmLabel = '実行' }) {
         return new Promise(resolve => {
           state.confirmDialogResolver = resolve;
           els.confirmDialogTitle.textContent = title;
@@ -937,12 +1114,23 @@
       }
       function resolveConfirmDialog(value) { closeModal(els.confirmDialogBackdrop); const resolver = state.confirmDialogResolver; state.confirmDialogResolver = null; if (resolver) resolver(value); }
       function snapshot() { return { html: els.lessonContainer.innerHTML, log: clone(state.log || []) }; }
-      function pushUndo() { state.undoStack.push(snapshot()); if (state.undoStack.length > UNDO_MAX) state.undoStack.shift(); state.redoStack = []; }
-      function restoreState(s) { if (!s) return; els.lessonContainer.innerHTML = s.html; ensureResizableImages(); state.log = s.log || []; saveDraft(); }
-      function undo() { if (state.undoStack.length <= 1) return; state.redoStack.push(snapshot()); state.undoStack.pop(); restoreState(state.undoStack[state.undoStack.length - 1]); }
-      function redo() { if (!state.redoStack.length) return; state.undoStack.push(snapshot()); restoreState(state.redoStack.pop()); }
+      function pushUndo() { state.undoStack.push(snapshot()); if (state.undoStack.length > UNDO_MAX) state.undoStack.shift(); state.redoStack = []; syncMobileUndoButton(); }
+      function restoreState(s) { if (!s) return; els.lessonContainer.innerHTML = s.html; ensureResizableImages(); state.log = s.log || []; saveDraft(); syncMobileUndoButton(); }
+      function undo() { if (state.undoStack.length <= 1) { syncMobileUndoButton(); return false; } state.redoStack.push(snapshot()); const previous = state.undoStack.pop(); restoreState(previous); return true; }
+      function redo() { if (!state.redoStack.length) return false; state.undoStack.push(snapshot()); restoreState(state.redoStack.pop()); return true; }
+      function performMobileUndo() {
+        if (undo()) showToast('元に戻しました。', 'warn');
+        else showToast('元に戻せる変更がありません。', 'warn');
+        syncMobileUndoButton();
+      }
       function lockHistoryHotkey() { state.__historyHotkeyLock = true; clearTimeout(state.__historyHotkeyTimer); state.__historyHotkeyTimer = setTimeout(() => { state.__historyHotkeyLock = false; }, 80); }
-      function addLog(entry) { state.log.push(entry); state.draftChangedAt = nowIso(); saveDraft(); }
+      function addLog(entry) {
+        state.log.push(entry);
+        state.draftChangedAt = nowIso();
+        saveDraft();
+        markStudentAutoSaveDirty();
+        showUndoToast('変更を適用しました。');
+      }
 
       // キーワード化した箇所は元の HTML を保持し、ポップオーバーから復元できるようにする。
       function closeKeywordPopover() {
@@ -1074,6 +1262,7 @@
           state.undoStack = [snapshot()];
           state.redoStack = [];
           clearCurrentAction();
+          clearStudentAutoSaveState();
           saveDraft();
           if (!options.silent) showToast(item.hasStudentWork ? '自分の保存内容を読み込みました。' : '教師が公開した教材を読み込みました。');
           return;
@@ -1090,6 +1279,7 @@
         state.undoStack = [snapshot()];
         state.redoStack = [];
         clearCurrentAction();
+        clearStudentAutoSaveState();
         saveDraft();
         if (!options.silent) showToast('教材を読み込みました。');
       }
@@ -1205,6 +1395,7 @@
         ensureResizableImages();
         state.undoStack = [snapshot()];
         state.redoStack = [];
+        clearStudentAutoSaveState();
         saveDraft();
         setView('editor');
         recordEvent('material_load_into_editor', { materialId: item.id, title: item.title || '' });
@@ -1223,6 +1414,7 @@
         els.lessonContainer.innerHTML = item.htmlContent || '';
         ensureResizableImages();
         state.undoStack = [snapshot()]; state.redoStack = [];
+        clearStudentAutoSaveState();
         saveDraft();
         setView('editor');
         recordEvent('material_load_into_editor', { materialId: item.id, title: item.title || '' });
@@ -1234,25 +1426,7 @@
         if (!state.baseLessonId) return showToast('教材が選択されていません。', 'warn');
         const role = state.currentUser.role || 'student';
         if (role === 'student') {
-          if (!state.currentSavedId) return showToast('授業教材がまだ読み込まれていません。', 'warn');
-          try {
-            const data = await apiRequest(`/api/materials/${state.currentSavedId}/work`, {
-              method: 'POST',
-              body: JSON.stringify({
-                editedContent: els.lessonContainer.innerHTML,
-                operationLogs: clone(state.log)
-              })
-            });
-            const saved = data.material;
-            state.courseMaterialsCache = (state.courseMaterialsCache || []).map(item => String(item.id) === String(saved.id) ? saved : item);
-            saveSaves(state.courseMaterialsCache);
-            state.draftChangedAt = nowIso();
-            saveDraft();
-            renderSavedList();
-            showToast('自分の加工結果を保存しました。');
-          } catch (error) {
-            showToast(error.message, 'error');
-          }
+          await saveStudentWork({ silent: false });
           return;
         }
         if (!state.currentCourseId) return showToast('先に授業を作成または選択してください。', 'warn');
@@ -1324,6 +1498,9 @@
 
       function setView(view) {
         const role = state.currentUser?.role || 'student';
+        if (state.currentView === 'editor' && view !== 'editor') {
+          flushStudentAutoSave({ silent: true, reason: 'view-change' });
+        }
         if (view === 'editor' && role === 'teacher' && !state.currentCourseId) {
           showToast('先に授業を選択してください。教師の教材加工は授業ごとに行います。', 'warn');
           view = 'courses';
@@ -1370,14 +1547,65 @@
         closeMobileNav();
         syncEditorInteractionMode();
         syncMobileShell();
+        syncMobileUndoButton();
       }
 
-      function syncEditorStatusTag() { els.editorStatusTag.textContent = state.currentSavedId ? '保存済み教材を再編集中' : '本文編集エリア'; }
+      function syncEditorStatusTag() {
+        if (!els.editorStatusTag) return;
+        if (isStudentEditingMaterial()) {
+          if (state.studentAutoSaveDirty) {
+            els.editorStatusTag.textContent = '未保存の変更があります';
+            return;
+          }
+          if (state.studentLastAutoSavedAt) {
+            els.editorStatusTag.textContent = `自動保存済み ${fmt(state.studentLastAutoSavedAt)}`;
+            return;
+          }
+        }
+        els.editorStatusTag.textContent = state.currentSavedId ? '保存済み教材を再編集中' : '本文編集エリア';
+      }
 
       // contenteditable な教材本文に対して装飾を適用するための選択範囲ユーティリティ。
       function getActiveRange(container) { const sel = window.getSelection(); if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null; const range = sel.getRangeAt(0); return container.contains(range.commonAncestorContainer) ? range : null; }
       const BLOCK_SELECTOR = 'p, div, li, h1, h2, h3, blockquote, pre';
+      const PROTECTED_INLINE_SELECTOR = 'math, svg';
       function closestBlock(node, container) { let el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement; if (!el) return null; if (el === container) return container; return el.closest(BLOCK_SELECTOR) || container; }
+      function rangeIntersectsNodeSafe(range, node) { try { return range.intersectsNode(node); } catch { return false; } }
+      function getProtectedNodesInRange(container, range) {
+        return Array.from(container.querySelectorAll(PROTECTED_INLINE_SELECTOR)).filter(node => rangeIntersectsNodeSafe(range, node));
+      }
+      function wrapTextNodesInRange(container, range, builder) {
+        const textNodes = [];
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+            if (node.parentElement?.closest(PROTECTED_INLINE_SELECTOR)) return NodeFilter.FILTER_REJECT;
+            return rangeIntersectsNodeSafe(range, node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          }
+        });
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+        for (let i = textNodes.length - 1; i >= 0; i -= 1) {
+          const tn = textNodes[i];
+          const len = tn.nodeValue.length;
+          const start = tn === range.startContainer ? range.startOffset : 0;
+          const end = tn === range.endContainer ? range.endOffset : len;
+          if (start === end) continue;
+          const r = document.createRange();
+          r.setStart(tn, start);
+          r.setEnd(tn, end);
+          if (!r.toString().trim()) continue;
+          const fragment = r.extractContents();
+          r.insertNode(builder(fragment));
+        }
+      }
+      function applySafeInlineSelection(container, textBuilder, protectedApplier = null) {
+        const range = getActiveRange(container);
+        if (!range || !range.toString().trim()) return false;
+        getProtectedNodesInRange(container, range).forEach(node => protectedApplier?.(node));
+        wrapTextNodesInRange(container, range, textBuilder);
+        try { window.getSelection()?.removeAllRanges(); } catch { }
+        return true;
+      }
       function wrapRangeInline(range, builder) { const fragment = range.extractContents(); const wrapper = builder(fragment); range.insertNode(wrapper); range.collapse(false); return wrapper; }
       function wrapAcrossTextNodes(container, range, builder) { const textNodes = []; const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, { acceptNode(node) { if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT; try { return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; } catch { return NodeFilter.FILTER_REJECT; } } }); while (walker.nextNode()) textNodes.push(walker.currentNode); for (let i = textNodes.length - 1; i >= 0; i--) { const tn = textNodes[i]; const len = tn.nodeValue.length; const start = (tn === range.startContainer) ? range.startOffset : 0; const end = (tn === range.endContainer) ? range.endOffset : len; if (start === end) continue; const r = document.createRange(); r.setStart(tn, start); r.setEnd(tn, end); const txt = r.toString(); if (!txt || !txt.trim()) continue; const frag = r.extractContents(); const wrapper = builder(frag); r.insertNode(wrapper); } try { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); range.collapse(false); } catch { } }
       function wrapSelectionSmart(container, builder) { const range = getActiveRange(container); if (!range) return null; const selectedText = range.toString(); if (!selectedText || !selectedText.trim()) return null; const startBlock = closestBlock(range.startContainer, container); const endBlock = closestBlock(range.endContainer, container); if (startBlock && endBlock && startBlock !== endBlock) { wrapAcrossTextNodes(container, range, builder); return true; } return wrapRangeInline(range, builder); }
@@ -1388,6 +1616,10 @@
 
         const selectedText = range.toString();
         if (!selectedText || !selectedText.trim()) return;
+        if (getProtectedNodesInRange(container, range).length) {
+          showToast('数式を含む範囲は、数式が壊れないようキーワード化できません。', 'warn');
+          return;
+        }
 
         let node = range.commonAncestorContainer;
         if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
@@ -1482,14 +1714,39 @@
           sel.removeAllRanges();
         } catch { }
       }
-      function applyColor(container, color) { wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.style.color = color; span.appendChild(frag); return span; }); }
-      function applyMarker(container, color) { wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.style.backgroundColor = color; span.appendChild(frag); return span; }); }
-      function applyEmphasis(container, type) { wrapSelectionSmart(container, frag => { const el = document.createElement(type === 'underline' ? 'u' : 'strong'); el.appendChild(frag); return el; }); }
-      function applyFontSize(container, size) { wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.style.fontSize = size; span.appendChild(frag); return span; }); }
-      function applyPopup(container, text) { if (!text) return; wrapSelectionSmart(container, frag => { const span = document.createElement('span'); span.className = 'popup-anchor'; span.dataset.popup = text; span.appendChild(frag); return span; }); }
+      function applyColor(container, color) {
+        applySafeInlineSelection(container, frag => { const span = document.createElement('span'); span.style.color = color; span.appendChild(frag); return span; }, node => { node.style.color = color; });
+      }
+      function applyMarker(container, color) {
+        applySafeInlineSelection(container, frag => { const span = document.createElement('span'); span.style.backgroundColor = color; span.appendChild(frag); return span; }, node => { node.style.backgroundColor = color; });
+      }
+      function applyEmphasis(container, type) {
+        applySafeInlineSelection(container, frag => { const el = document.createElement(type === 'underline' ? 'u' : 'strong'); el.appendChild(frag); return el; }, node => { if (type === 'underline') node.style.textDecoration = 'underline'; else node.style.fontWeight = '700'; });
+      }
+      function applyFontSize(container, size) {
+        applySafeInlineSelection(container, frag => { const span = document.createElement('span'); span.style.fontSize = size; span.appendChild(frag); return span; }, node => { node.style.fontSize = size; });
+      }
+      function applyPopup(container, text) {
+        if (!text) return;
+        const range = getActiveRange(container);
+        if (range && getProtectedNodesInRange(container, range).length) showToast('数式部分にはポップアップを付けず、通常テキストだけに適用します。', 'warn');
+        applySafeInlineSelection(container, frag => { const span = document.createElement('span'); span.className = 'popup-anchor'; span.dataset.popup = text; span.appendChild(frag); return span; });
+      }
       function clearSelectionStyle(container) {
         const range = getActiveRange(container);
         if (!range) return;
+        const protectedNodes = getProtectedNodesInRange(container, range);
+        if (protectedNodes.length) {
+          protectedNodes.forEach(node => {
+            node.style.color = '';
+            node.style.backgroundColor = '';
+            node.style.fontSize = '';
+            node.style.fontWeight = '';
+            node.style.textDecoration = '';
+          });
+          showToast('数式は壊れないよう、数式要素の装飾だけを解除しました。', 'warn');
+          return;
+        }
 
         const wrappers = Array.from(container.querySelectorAll('.keyword-wrapper'));
         let handledKeyword = false;
@@ -1903,7 +2160,7 @@
         });
         els.lessonContainer.addEventListener('mouseup', e => { if (isTouchMode()) return; if (e.target.closest('.keyword-toggle')) return; if (!state.currentAction) return; const sel = window.getSelection(); if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return; applyCurrentActionToSelection(); sel.removeAllRanges(); });
         els.lessonContainer.addEventListener('beforeinput', e => { if (e.inputType === 'historyUndo') { e.preventDefault(); if (state.__historyHotkeyLock) return; undo(); } if (e.inputType === 'historyRedo') { e.preventDefault(); if (state.__historyHotkeyLock) return; redo(); } }, { capture: true });
-        els.lessonContainer.addEventListener('input', () => { state.draftChangedAt = nowIso(); saveDraft(); });
+        els.lessonContainer.addEventListener('input', () => { state.draftChangedAt = nowIso(); saveDraft(); markStudentAutoSaveDirty(); });
         els.lessonContainer.addEventListener('paste', e => { const items = e.clipboardData?.items || []; for (const item of items) { if (item.type.startsWith('image/')) { e.preventDefault(); const file = item.getAsFile(); if (file) insertImageFile(file); return; } } });
         els.lessonContainer.addEventListener('dragover', e => e.preventDefault());
         els.lessonContainer.addEventListener('drop', e => { e.preventDefault(); const files = Array.from(e.dataTransfer?.files || []); files.filter(file => file.type.startsWith('image/')).forEach(insertImageFile); });
@@ -1925,7 +2182,7 @@
         }, true);
         els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; state.sortSelection = null; renderToolbar(); });
         els.importJsonBtn.addEventListener('click', () => els.importJsonInput.click());
-        els.importJsonInput.addEventListener('change', async event => { const file = event.target.files?.[0]; if (!file) return; try { const text = await file.text(); const parsed = JSON.parse(text); const items = loadSaves(); const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed.saves) ? parsed.saves : [parsed]; const normalized = incoming.map(item => ({ id: item.id || `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, baseLessonId: item.baseLessonId || item.base_lesson_id || SAMPLE_LESSONS[0].id, title: item.title || 'Imported save', htmlContent: item.htmlContent || item.html_content || '', log: Array.isArray(item.log) ? item.log : [], createdAt: item.createdAt || item.created_at || nowIso(), updatedAt: item.updatedAt || item.updated_at || nowIso() })); saveSaves([...normalized, ...items]); renderSavedList(); showToast('JSON を取り込みました。'); } catch { showToast('JSON の取り込みに失敗しました。', 'error'); } finally { event.target.value = ''; } });
+        els.importJsonInput.addEventListener('change', async event => { const file = event.target.files?.[0]; if (!file) return; try { const text = await file.text(); const parsed = JSON.parse(text); const items = loadSaves(); const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed.saves) ? parsed.saves : [parsed]; const normalized = incoming.map(item => ({ id: item.id || `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, baseLessonId: item.baseLessonId || item.base_lesson_id || SAMPLE_LESSONS[0].id, title: item.title || '取り込み教材', htmlContent: item.htmlContent || item.html_content || '', log: Array.isArray(item.log) ? item.log : [], createdAt: item.createdAt || item.created_at || nowIso(), updatedAt: item.updatedAt || item.updated_at || nowIso() })); saveSaves([...normalized, ...items]); renderSavedList(); showToast('JSON を取り込みました。'); } catch { showToast('JSON の取り込みに失敗しました。', 'error'); } finally { event.target.value = ''; } });
         els.exportAllBtn.addEventListener('click', exportAll); els.mobileExportBtn.addEventListener('click', () => { exportAll(); closeMobileNav(); }); els.resetDemoBtn.addEventListener('click', resetDemo);
         els.closePreviewBtn.addEventListener('click', closePreview); els.previewDialogBackdrop.addEventListener('click', e => { if (e.target === els.previewDialogBackdrop) closePreview(); });
       }
@@ -2413,7 +2670,7 @@
           const text = await file.text();
           const parsed = JSON.parse(text);
           const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed.saves) ? parsed.saves : [parsed];
-          const normalized = incoming.map(item => ({ id: item.id || `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, baseLessonId: item.baseLessonId || item.base_lesson_id || SAMPLE_LESSONS[0].id, title: item.title || 'Imported save', htmlContent: item.htmlContent || item.html_content || '', log: Array.isArray(item.log) ? item.log : [], createdAt: item.createdAt || item.created_at || nowIso(), updatedAt: item.updatedAt || item.updated_at || nowIso() }));
+          const normalized = incoming.map(item => ({ id: item.id || `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, baseLessonId: item.baseLessonId || item.base_lesson_id || SAMPLE_LESSONS[0].id, title: item.title || '取り込み教材', htmlContent: item.htmlContent || item.html_content || '', log: Array.isArray(item.log) ? item.log : [], createdAt: item.createdAt || item.created_at || nowIso(), updatedAt: item.updatedAt || item.updated_at || nowIso() }));
           for (const item of normalized) {
             await apiRequest('/api/materials', {
               method: 'POST',
@@ -2471,6 +2728,14 @@
           await deleteCourse(btn.dataset.id);
           return true;
         }
+        if (action === 'open-material') {
+          const material = (state.courseMaterialsCache || []).find(item => String(item.id) === String(btn.dataset.id));
+          if (material?.courseId) state.currentCourseId = material.courseId;
+          loadLessonById(btn.dataset.id);
+          setView('editor');
+          renderLessonSelect();
+          return true;
+        }
         const courseId = Number(btn.dataset.id || state.currentCourseId);
         if (courseId) {
           state.currentCourseId = courseId;
@@ -2482,11 +2747,6 @@
         }
         if (action === 'open') {
           setView(role === 'student' ? 'editor' : 'materials');
-          return true;
-        }
-        if (action === 'open-material') {
-          loadLessonById(btn.dataset.id);
-          setView('editor');
           return true;
         }
         if (action === 'manage-materials') {
@@ -2513,6 +2773,7 @@
         document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => setView(btn.dataset.view)));
         document.querySelectorAll('[data-mobile-tool]').forEach(button => button.addEventListener('click', () => { const key = button.dataset.mobileTool || 'all'; if (state.mobileOpen && state.activeMobileTool === key) closeMobilePanel(); else openMobilePanel(key); }));
         els.mobileToolBackdrop.addEventListener('click', closeMobilePanel);
+        els.mobileUndoBtn?.addEventListener('click', performMobileUndo);
         els.mobileToolCloseBtn.addEventListener('click', closeMobilePanel);
         els.mobileNavOpenBtn.addEventListener('click', () => state.mobileNavOpen ? closeMobileNav() : openMobileNav());
         els.mobileNavCloseBtn.addEventListener('click', closeMobileNav);
@@ -2574,7 +2835,7 @@
         els.lessonContainer.addEventListener('pointerdown', startImageResize);
         els.lessonContainer.addEventListener('mouseup', handleEditorMouseUp);
         els.lessonContainer.addEventListener('beforeinput', handleEditorBeforeInput, { capture: true });
-        els.lessonContainer.addEventListener('input', () => { state.draftChangedAt = nowIso(); saveDraft(); });
+        els.lessonContainer.addEventListener('input', () => { state.draftChangedAt = nowIso(); saveDraft(); markStudentAutoSaveDirty(); });
         els.lessonContainer.addEventListener('paste', handleEditorPaste);
         els.lessonContainer.addEventListener('dragover', event => event.preventDefault());
         els.lessonContainer.addEventListener('drop', handleEditorDrop);
@@ -2586,6 +2847,12 @@
         window.addEventListener('resize', syncViewportBottomOffset);
         window.visualViewport?.addEventListener('resize', syncViewportBottomOffset);
         window.visualViewport?.addEventListener('scroll', syncViewportBottomOffset);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') flushStudentAutoSave({ silent: true, keepalive: true, reason: 'hidden' });
+        });
+        window.addEventListener('pagehide', () => flushStudentAutoSave({ silent: true, keepalive: true, reason: 'pagehide' }));
+        window.addEventListener('beforeunload', () => flushStudentAutoSave({ silent: true, keepalive: true, reason: 'beforeunload' }));
+        startStudentAutoSaveLoop();
 
         els.sidebarToggleBtn?.addEventListener('click', () => {
           state.desktopSidebarCollapsed = !state.desktopSidebarCollapsed;

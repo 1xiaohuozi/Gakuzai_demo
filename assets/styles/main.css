@@ -1882,13 +1882,15 @@
     }
 
     .mobile-tool-backdrop,
-    .mobile-tool-nav {
+    .mobile-tool-nav,
+    .mobile-undo-btn {
       display: none !important
     }
 
     .mobile-tool-nav[hidden],
     .mobile-selection-bar[hidden],
-    .mobile-tool-backdrop[hidden] {
+    .mobile-tool-backdrop[hidden],
+    .mobile-undo-btn[hidden] {
       display: none !important
     }
 
@@ -2106,6 +2108,30 @@
     .mobile-tool-nav__btn:active {
       background: rgba(37, 99, 235, .1);
       color: var(--se-primary)
+    }
+
+    .mobile-undo-btn {
+      position: fixed;
+      right: 14px;
+      bottom: calc(var(--mobile-nav-height) + var(--mobile-nav-offset) + var(--vv-bottom-offset) + env(safe-area-inset-bottom, 0px) + 12px);
+      z-index: 1310;
+      width: 48px;
+      height: 48px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, .24);
+      background: rgba(255, 255, 255, .96);
+      color: var(--se-primary);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, .16);
+      font-size: 24px;
+      font-weight: 900;
+      line-height: 1;
+      cursor: pointer;
+      backdrop-filter: blur(14px)
+    }
+
+    .mobile-undo-btn:disabled {
+      opacity: .42;
+      color: var(--se-muted)
     }
 
     .mobile-selection-bar {
@@ -2410,7 +2436,23 @@
       min-width: 220px;
       max-width: 360px;
       font-size: 13px;
-      line-height: 1.5
+      line-height: 1.5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px
+    }
+
+    .toast__action {
+      border: 1px solid rgba(255, 255, 255, .42);
+      background: rgba(255, 255, 255, .16);
+      color: #fff;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 900;
+      cursor: pointer;
+      white-space: nowrap
     }
 
     .toast.success {
@@ -2561,6 +2603,12 @@
 
       .mobile-tool-nav {
         display: grid !important
+      }
+
+      .mobile-undo-btn:not([hidden]) {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center
       }
 
       .sa-content.se-page {

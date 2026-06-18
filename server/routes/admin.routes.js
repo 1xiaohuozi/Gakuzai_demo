@@ -12,7 +12,8 @@ router.get('/summary', (req, res) => {
     users: one('SELECT COUNT(*) AS count FROM users').count,
     courses: one('SELECT COUNT(*) AS count FROM courses').count,
     materials: one('SELECT COUNT(*) AS count FROM materials').count,
-    studentWorks: one('SELECT COUNT(*) AS count FROM student_material_works').count
+    studentWorks: one('SELECT COUNT(*) AS count FROM student_material_works').count,
+    operationEvents: one('SELECT COUNT(*) AS count FROM operation_events').count
   });
 });
 

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS materials (
   html_content TEXT NOT NULL,
   log_json TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
+  display_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -64,6 +65,52 @@ CREATE TABLE IF NOT EXISTS student_material_works (
 CREATE INDEX IF NOT EXISTS idx_student_material_works_student
 ON student_material_works (student_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS operation_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_event_id TEXT UNIQUE,
+  user_id INTEGER NOT NULL,
+  course_id INTEGER,
+  material_id INTEGER,
+  student_work_id INTEGER,
+  base_lesson_id TEXT,
+  action_type TEXT NOT NULL,
+  action_params_json TEXT NOT NULL DEFAULT '{}',
+  selected_text TEXT,
+  selected_html TEXT,
+  block_id TEXT,
+  block_text TEXT,
+  operation_index INTEGER,
+  material_version_id TEXT,
+  block_order INTEGER,
+  block_hash TEXT,
+  selected_text_hash TEXT,
+  before_text TEXT,
+  after_text TEXT,
+  before_html TEXT,
+  after_html TEXT,
+  replacement_text TEXT,
+  normalized_replacement TEXT,
+  previous_event_id TEXT,
+  time_since_previous_ms INTEGER,
+  is_repeated_block_edit INTEGER NOT NULL DEFAULT 0,
+  start_offset INTEGER,
+  end_offset INTEGER,
+  client_time TEXT,
+  session_id TEXT,
+  device_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE SET NULL,
+  FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE,
+  FOREIGN KEY (student_work_id) REFERENCES student_material_works(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_operation_events_material_user_created
+ON operation_events (material_id, user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_operation_events_course_created
+ON operation_events (course_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS user_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER,
@@ -84,3 +131,42 @@ CREATE TABLE IF NOT EXISTS user_settings (
   PRIMARY KEY (user_id, setting_key),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS assignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id INTEGER NOT NULL,
+  material_id INTEGER NOT NULL,
+  teacher_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  assignment_type TEXT NOT NULL DEFAULT 'choice' CHECK (assignment_type IN ('choice', 'text', 'file')),
+  question_text TEXT NOT NULL,
+  choices_json TEXT NOT NULL DEFAULT '[]',
+  correct_choice_index INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('draft', 'published', 'closed')),
+  due_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+  FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE,
+  FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_assignments_course_material
+ON assignments (course_id, material_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS assignment_submissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  assignment_id INTEGER NOT NULL,
+  student_id INTEGER NOT NULL,
+  answer_json TEXT NOT NULL DEFAULT '{}',
+  choice_index INTEGER,
+  is_correct INTEGER NOT NULL DEFAULT 0,
+  submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+  FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(assignment_id, student_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assignment_submissions_assignment
+ON assignment_submissions (assignment_id, updated_at DESC);

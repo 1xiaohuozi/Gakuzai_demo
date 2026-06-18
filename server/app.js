@@ -13,6 +13,8 @@ const materialRoutes = require('./routes/materials.routes');
 const eventRoutes = require('./routes/events.routes');
 const settingRoutes = require('./routes/settings.routes');
 const adminRoutes = require('./routes/admin.routes');
+const analyticsRoutes = require('./routes/analytics.routes');
+const assignmentRoutes = require('./routes/assignments.routes');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -21,7 +23,7 @@ const publicRoot = path.join(__dirname, '..');
 app.use(helmet({
   contentSecurityPolicy: false
 }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '25mb' }));
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 300,
@@ -32,9 +34,11 @@ app.use('/api/', rateLimit({
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/materials', materialRoutes);
+app.use('/api/assignments', assignmentRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/settings', settingRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 app.use(express.static(publicRoot, {
   extensions: ['html'],
@@ -43,6 +47,9 @@ app.use(express.static(publicRoot, {
 
 app.use((err, req, res, next) => {
   console.error(err);
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body is too large.' });
+  }
   res.status(500).json({ error: 'Internal server error.' });
 });
 

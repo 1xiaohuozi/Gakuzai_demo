@@ -24,12 +24,14 @@
         <span class="sidebar-toggle-btn__label">サイドバーを折りたたむ</span>
       </button>
       <nav class="sa-nav">
-        <button class="sa-navbtn active" data-role-nav="student teacher" data-view="courses" data-short="授業"
-          aria-label="授業一覧">授業一覧</button>
+        <button class="sa-navbtn active" data-role-nav="student teacher" data-view="courses" data-short="管理"
+          aria-label="授業・教材管理">授業・教材管理</button>
         <button class="sa-navbtn" data-role-nav="student" data-view="editor" data-short="加工"
           aria-label="教材加工">教材加工</button>
-        <button class="sa-navbtn" data-role-nav="teacher" data-view="materials" data-short="教材"
-          aria-label="教材管理">教材管理</button>
+        <button class="sa-navbtn" data-role-nav="student teacher" data-view="assignments" data-short="課題"
+          aria-label="課題">課題</button>
+        <button class="sa-navbtn" data-role-nav="teacher" data-view="materials" data-short="分析"
+          aria-label="学習データ分析">学習データ分析</button>
         <button class="sa-navbtn" data-role-nav="student" data-view="saved" data-short="記録"
           aria-label="学習記録">学習記録</button>
         <button class="sa-navbtn" data-role-nav="admin" data-view="admin" data-short="管理"
@@ -49,9 +51,11 @@
           <button id="mobileNavCloseBtn" class="mobile-nav-drawer__close" type="button" aria-label="メニューを閉じる">✕</button>
         </div>
         <nav class="mobile-nav-drawer__nav">
-          <button class="mobile-nav-drawer__link active" data-role-nav="student teacher" data-view="courses">授業一覧</button>
+          <button class="mobile-nav-drawer__link active" data-role-nav="student teacher"
+            data-view="courses">授業・教材管理</button>
           <button class="mobile-nav-drawer__link" data-role-nav="student" data-view="editor">教材加工</button>
-          <button class="mobile-nav-drawer__link" data-role-nav="teacher" data-view="materials">教材管理</button>
+          <button class="mobile-nav-drawer__link" data-role-nav="student teacher" data-view="assignments">課題</button>
+          <button class="mobile-nav-drawer__link" data-role-nav="teacher" data-view="materials">学習データ分析</button>
           <button class="mobile-nav-drawer__link" data-role-nav="student" data-view="saved">学習記録</button>
           <button class="mobile-nav-drawer__link" data-role-nav="admin" data-view="admin">管理者コンソール</button>
         </nav>
@@ -107,8 +111,8 @@
           <div class="lesson-header card-shell">
             <div class="lesson-heading">
               <div class="lesson-heading__label">COURSES</div>
-              <h2 class="lesson-title" id="coursesTitle">授業一覧</h2>
-              <p class="lesson-heading__hint" id="coursesHint">授業コードで参加するか、教師として授業を作成します。</p>
+              <h2 class="lesson-title" id="coursesTitle">授業・教材管理</h2>
+              <p class="lesson-heading__hint" id="coursesHint">教師は授業と教材をここで管理し、学生は参加中の授業から教材を開きます。</p>
             </div>
           </div>
           <div id="dashboardSummary" class="app-stat-grid"></div>
@@ -196,24 +200,38 @@
         </section>
       </section>
 
+      <section class="sa-content se-page app-list-page" id="assignmentsView" hidden>
+        <section class="lesson-shell">
+          <div class="lesson-header card-shell">
+            <div class="lesson-heading">
+              <div class="lesson-heading__label">ASSIGNMENTS</div>
+              <h2 class="lesson-title" id="assignmentsTitle">課題</h2>
+              <p class="lesson-heading__hint" id="assignmentsHint">教師は教材に紐づく課題を配信し、学生はここから回答します。</p>
+            </div>
+          </div>
+          <div id="assignmentsCourseList" class="sv-grid"></div>
+          <div id="assignmentsWorkspace" class="app-workspace-grid"></div>
+        </section>
+      </section>
+
       <section class="sa-content se-page app-list-page" id="materialsView" hidden>
         <section class="lesson-shell">
           <div class="lesson-header card-shell">
             <div class="lesson-heading">
               <div class="lesson-heading__label">MATERIALS</div>
-              <h2 class="lesson-title">教材管理</h2>
-              <p class="lesson-heading__hint">現在の授業を基準に、教材の作成・編集・公開と学生の作業確認を行います。</p>
+              <h2 class="lesson-title">学習データ分析</h2>
+              <p class="lesson-heading__hint">授業ごとに学生の教材加工ログを集計し、操作傾向と学習方略を確認します。</p>
             </div>
           </div>
           <div id="materialsSummary" class="app-stat-grid"></div>
           <div id="teacherMaterialList" class="sv-grid"></div>
-          <div class="lesson-header card-shell" style="margin-top:20px">
+          <!-- <div class="lesson-header card-shell" style="margin-top:20px">
             <div class="lesson-heading">
               <div class="lesson-heading__label">STUDENT WORKS</div>
               <h2 class="lesson-title">学生の作業一覧</h2>
               <p class="lesson-heading__hint">教材管理の中で、選択した教材に対する学生の保存状況を確認します。</p>
             </div>
-          </div>
+          </div> -->
           <div id="workList" class="sv-grid"></div>
         </section>
       </section>
@@ -323,6 +341,45 @@
     </div>
   </div>
 
+  <div id="analysisDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
+    <div class="dialog app-modal app-modal--analysis">
+      <div class="dialog__head">
+        <div>
+          <h3 id="analysisDialogTitle" class="dialog__title">分析詳細</h3>
+          <div id="analysisDialogMeta" class="form-label"></div>
+        </div>
+        <button id="closeAnalysisDialogBtn" class="sa-btn sa-btn--ghost" type="button">閉じる</button>
+      </div>
+      <div id="analysisDialogContent" class="dialog__content analysis-dialog-content"></div>
+    </div>
+  </div>
+
+  <div id="assignmentDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
+    <div class="dialog app-modal app-modal--assignment">
+      <div class="dialog__head">
+        <div>
+          <h3 id="assignmentDialogTitle" class="dialog__title">練習問題を作成</h3>
+          <div id="assignmentDialogMeta" class="form-label">教材に紐づく練習問題を設定します。</div>
+        </div>
+        <button id="closeAssignmentDialogBtn" class="sa-btn sa-btn--ghost" type="button">閉じる</button>
+      </div>
+      <div id="assignmentDialogContent" class="dialog__content"></div>
+    </div>
+  </div>
+
+  <div id="studentAssignmentDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
+    <div class="dialog app-modal app-modal--assignment">
+      <div class="dialog__head">
+        <div>
+          <h3 id="studentAssignmentDialogTitle" class="dialog__title">回答</h3>
+          <div id="studentAssignmentDialogMeta" class="form-label"></div>
+        </div>
+        <button id="closeStudentAssignmentDialogBtn" class="sa-btn sa-btn--ghost" type="button">閉じる</button>
+      </div>
+      <div id="studentAssignmentDialogContent" class="dialog__content"></div>
+    </div>
+  </div>
+
   <div id="confirmDialogBackdrop" class="dialog-backdrop" aria-hidden="true">
     <div class="dialog app-modal app-modal--narrow">
       <div class="dialog__head">
@@ -345,4 +402,5 @@
   <script src="./assets/scripts/sample-lessons.js"></script>
   <script src="./assets/scripts/app.js"></script>
 </body>
+
 </html>

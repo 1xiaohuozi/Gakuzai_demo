@@ -7,12 +7,12 @@
 }
 
 .auth-shell {
-  width: min(1180px, calc(100% - 32px));
+  width: min(980px, calc(100% - 32px));
   min-height: 100vh;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1.22fr) minmax(340px, .72fr);
-  gap: 34px;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  gap: 40px;
   align-items: center;
   padding: 32px 0;
 }
@@ -20,7 +20,7 @@
 .auth-hero {
   color: #fff;
   display: grid;
-  gap: 18px;
+  gap: 14px;
   align-content: center;
 }
 
@@ -39,133 +39,11 @@
 }
 
 .auth-hero__copy {
-  max-width: 610px;
+  max-width: 520px;
   margin: 0;
   color: rgba(255, 255, 255, .84);
   font-size: 16px;
   line-height: 1.8;
-}
-
-.auth-method-showcase {
-  width: min(760px, 100%);
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  align-items: stretch;
-}
-
-.auth-method-card {
-  border: 1px solid rgba(255, 255, 255, .22);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .13);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 24px 70px rgba(15, 23, 42, .18);
-}
-
-.auth-method-card {
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  animation: authFloatIn .62s ease both;
-  overflow: hidden;
-}
-
-.auth-method-card:nth-child(2) {
-  animation-delay: .08s;
-}
-
-.auth-method-card--primary {
-  background: linear-gradient(180deg, rgba(236, 253, 245, .2), rgba(255, 255, 255, .12));
-  border-color: rgba(187, 247, 208, .42);
-}
-
-.auth-method-card__head {
-  display: grid;
-  gap: 6px;
-}
-
-.auth-method-card__tag {
-  color: rgba(255, 255, 255, .68);
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.auth-method-card strong {
-  font-size: 14px;
-  line-height: 1.35;
-}
-
-.auth-method-card__flow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.auth-method-card__flow span {
-  min-width: 0;
-  padding: 6px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .18);
-  border: 1px solid rgba(255, 255, 255, .16);
-  color: rgba(255, 255, 255, .86);
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.auth-method-card__flow i {
-  width: 16px;
-  height: 1px;
-  background: rgba(255, 255, 255, .42);
-  flex: 0 0 auto;
-  position: relative;
-}
-
-.auth-method-card__flow i::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  border-right: 1px solid rgba(255, 255, 255, .62);
-  border-top: 1px solid rgba(255, 255, 255, .62);
-  transform: translateY(-50%) rotate(45deg);
-}
-
-.auth-method-card img {
-  width: 100%;
-  aspect-ratio: 1.22;
-  object-fit: contain;
-  padding: 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .93);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .05);
-}
-
-.auth-method-card p {
-  margin: 0;
-  color: rgba(255, 255, 255, .78);
-  font-size: 12px;
-  line-height: 1.65;
-}
-
-.auth-method-card__formula {
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, .16);
-  color: rgba(255, 255, 255, .84);
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1.4;
-}
-
-.auth-method-card__formula--strong {
-  color: #bbf7d0;
 }
 
 .auth-card {
@@ -268,31 +146,10 @@
   color: #b91c1c;
 }
 
-@keyframes authFloatIn {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @media (max-width: 980px) {
   .auth-shell {
-    grid-template-columns: minmax(0, 1fr) minmax(330px, .78fr);
+    grid-template-columns: minmax(0, 1fr) minmax(330px, .82fr);
     gap: 22px;
-  }
-
-  .auth-method-showcase {
-    grid-template-columns: 1fr;
-    max-width: 440px;
-  }
-
-  .auth-method-card:first-child {
-    display: none;
   }
 }
 
@@ -326,10 +183,6 @@
   .auth-hero__copy {
     font-size: 14px;
     line-height: 1.7;
-  }
-
-  .auth-method-showcase {
-    display: none;
   }
 
   .auth-card {

@@ -25,10 +25,13 @@ function toMaterial(row) {
     log: safeJson(row.effective_log_json || row.log_json, []),
     originalLog: safeJson(row.log_json, []),
     status: row.status || 'draft',
+    displayOrder: Number(row.display_order || 0),
     hasStudentWork: !!row.work_id,
     studentWorkId: row.work_id || null,
     createdAt: row.created_at,
-    updatedAt: row.effective_updated_at || row.updated_at
+    updatedAt: row.effective_updated_at || row.updated_at,
+    materialUpdatedAt: row.updated_at,
+    workUpdatedAt: row.effective_updated_at || null
   };
 }
 
@@ -54,6 +57,25 @@ function normalizePayload(body) {
     logJson: JSON.stringify(Array.isArray(body.log) ? body.log : []),
     status: ['draft', 'published'].includes(body.status) ? body.status : 'draft'
   };
+}
+
+function nextDisplayOrder(courseId) {
+  const row = db.prepare(
+    'SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order FROM materials WHERE course_id = ?'
+  ).get(courseId);
+  return Number(row?.next_order || 0);
+}
+
+function normalizeCourseOrder(courseId) {
+  const rows = db.prepare(
+    `SELECT id FROM materials
+     WHERE course_id = ?
+     ORDER BY display_order ASC, created_at ASC, id ASC`
+  ).all(courseId);
+  rows.forEach((row, index) => {
+    db.prepare('UPDATE materials SET display_order = ? WHERE id = ?').run(index, row.id);
+  });
+  return rows;
 }
 
 function canTeachCourse(userId, courseId) {
@@ -109,7 +131,7 @@ router.get('/', (req, res) => {
     rows = db.prepare(
       `SELECT m.* FROM materials m
        WHERE (? = 0 OR m.course_id = ?)
-       ORDER BY m.updated_at DESC`
+       ORDER BY m.course_id ASC, m.display_order ASC, m.created_at ASC, m.id ASC`
     ).all(courseId, courseId);
   } else if (req.user.role === 'teacher') {
     rows = db.prepare(
@@ -120,7 +142,7 @@ router.get('/', (req, res) => {
          ON cm.course_id = c.id AND cm.user_id = ? AND cm.role_in_course = 'teacher'
        WHERE (? = 0 OR m.course_id = ?)
          AND (c.teacher_id = ? OR cm.id IS NOT NULL)
-       ORDER BY m.updated_at DESC`
+       ORDER BY m.course_id ASC, m.display_order ASC, m.created_at ASC, m.id ASC`
     ).all(req.user.id, courseId, courseId, req.user.id);
   } else {
     rows = db.prepare(
@@ -131,7 +153,7 @@ router.get('/', (req, res) => {
          AND cm.user_id = ? AND cm.role_in_course = 'student'
        LEFT JOIN student_material_works w ON w.material_id = m.id AND w.student_id = ?
        WHERE m.status = 'published' AND (? = 0 OR m.course_id = ?)
-       ORDER BY m.updated_at DESC`
+       ORDER BY m.course_id ASC, m.display_order ASC, m.created_at ASC, m.id ASC`
     ).all(req.user.id, req.user.id, courseId, courseId);
   }
 
@@ -156,9 +178,9 @@ router.post('/', requireRole('teacher', 'admin'), (req, res) => {
   }
 
   const result = db.prepare(
-    `INSERT INTO materials (user_id, course_id, title, base_lesson_id, html_content, log_json, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(req.user.id, payload.courseId, payload.title, payload.baseLessonId, payload.htmlContent, payload.logJson, payload.status);
+    `INSERT INTO materials (user_id, course_id, title, base_lesson_id, html_content, log_json, status, display_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(req.user.id, payload.courseId, payload.title, payload.baseLessonId, payload.htmlContent, payload.logJson, payload.status, nextDisplayOrder(payload.courseId));
 
   const row = db.prepare('SELECT * FROM materials WHERE id = ?').get(result.lastInsertRowid);
   logUserEvent(req.user.id, 'material_create', { materialId: row.id, title: row.title, courseId: row.course_id });
@@ -177,12 +199,15 @@ router.put('/:id', requireRole('teacher', 'admin'), (req, res) => {
     return res.status(403).json({ error: 'Permission denied.' });
   }
 
+  const displayOrder = Number(payload.courseId) === Number(existing.course_id)
+    ? Number(existing.display_order || 0)
+    : nextDisplayOrder(payload.courseId);
   db.prepare(
     `UPDATE materials
      SET course_id = ?, title = ?, base_lesson_id = ?, html_content = ?, log_json = ?,
-         status = ?, updated_at = CURRENT_TIMESTAMP
+         status = ?, display_order = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
-  ).run(payload.courseId, payload.title, payload.baseLessonId, payload.htmlContent, payload.logJson, payload.status, req.params.id);
+  ).run(payload.courseId, payload.title, payload.baseLessonId, payload.htmlContent, payload.logJson, payload.status, displayOrder, req.params.id);
 
   const row = db.prepare('SELECT * FROM materials WHERE id = ?').get(req.params.id);
   logUserEvent(req.user.id, 'material_update', { materialId: row.id, title: row.title });
@@ -201,6 +226,49 @@ router.patch('/:id/status', requireRole('teacher', 'admin'), (req, res) => {
   ).run(status, req.params.id);
   const row = db.prepare('SELECT * FROM materials WHERE id = ?').get(req.params.id);
   res.json({ material: toMaterial(row) });
+});
+
+router.patch('/:id/order', requireRole('teacher', 'admin'), (req, res) => {
+  const existing = getAccessibleMaterial(req.user, Number(req.params.id));
+  if (!existing) return res.status(404).json({ error: 'Material not found.' });
+
+  const direction = String(req.body.direction || '').trim();
+  if (!['up', 'down'].includes(direction)) {
+    return res.status(400).json({ error: 'Material order direction must be up or down.' });
+  }
+
+  normalizeCourseOrder(existing.course_id);
+  const current = db.prepare('SELECT * FROM materials WHERE id = ?').get(existing.id);
+  const neighbor = direction === 'up'
+    ? db.prepare(
+      `SELECT * FROM materials
+       WHERE course_id = ? AND display_order < ?
+       ORDER BY display_order DESC, id DESC
+       LIMIT 1`
+    ).get(current.course_id, current.display_order)
+    : db.prepare(
+      `SELECT * FROM materials
+       WHERE course_id = ? AND display_order > ?
+       ORDER BY display_order ASC, id ASC
+       LIMIT 1`
+    ).get(current.course_id, current.display_order);
+
+  if (neighbor) {
+    db.prepare('UPDATE materials SET display_order = ? WHERE id = ?').run(neighbor.display_order, current.id);
+    db.prepare('UPDATE materials SET display_order = ? WHERE id = ?').run(current.display_order, neighbor.id);
+    logUserEvent(req.user.id, 'material_reorder', {
+      materialId: current.id,
+      courseId: current.course_id,
+      direction
+    });
+  }
+
+  const rows = db.prepare(
+    `SELECT m.* FROM materials m
+     WHERE m.course_id = ?
+     ORDER BY m.display_order ASC, m.created_at ASC, m.id ASC`
+  ).all(current.course_id);
+  res.json({ materials: rows.map(toMaterial) });
 });
 
 router.delete('/:id', requireRole('teacher', 'admin'), (req, res) => {
@@ -225,6 +293,17 @@ router.post('/:id/work', requireRole('student'), (req, res) => {
                    operation_logs = excluded.operation_logs,
                    updated_at = CURRENT_TIMESTAMP`
   ).run(material.id, req.user.id, editedContent, operationLogs);
+
+  const work = db.prepare(
+    'SELECT id FROM student_material_works WHERE material_id = ? AND student_id = ?'
+  ).get(material.id, req.user.id);
+  if (work) {
+    db.prepare(
+      `UPDATE operation_events
+       SET student_work_id = ?
+       WHERE material_id = ? AND user_id = ? AND student_work_id IS NULL`
+    ).run(work.id, material.id, req.user.id);
+  }
 
   const row = getAccessibleMaterial(req.user, Number(req.params.id));
   logUserEvent(req.user.id, 'student_material_work_save', { materialId: material.id });

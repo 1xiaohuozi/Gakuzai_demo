@@ -218,53 +218,86 @@ function filterCurrentOperationRows(rows, currentIndex, fields = {}) {
   });
 }
 
-router.post('/operation-events', requireRole('student'), (req, res) => {
-  const materialId = Number(req.body.materialId || req.body.material_id || 0);
-  const actionType = String(req.body.actionType || req.body.action_type || '').trim();
+const OPERATION_EVENT_INSERT_SQL = `
+  INSERT OR IGNORE INTO operation_events (
+    client_event_id, user_id, course_id, material_id, student_work_id,
+    base_lesson_id, action_type, action_params_json, selected_text,
+    selected_html, block_id, block_text, operation_index, material_version_id,
+    block_order, block_hash, selected_text_hash, before_text, after_text,
+    before_html, after_html, replacement_text, normalized_replacement,
+    previous_event_id, time_since_previous_ms, is_repeated_block_edit,
+    start_offset, end_offset, client_time, session_id, device_json
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+function normalizeOperationPayload(body) {
+  const materialId = Number(body.materialId || body.material_id || 0);
+  const actionType = String(body.actionType || body.action_type || '').trim();
   if (!materialId || !actionType) {
-    return res.status(400).json({ error: 'materialId and actionType are required.' });
+    const error = new Error('materialId and actionType are required.');
+    error.status = 400;
+    throw error;
   }
 
-  const material = getPublishedStudentMaterial(req.user.id, materialId);
-  if (!material) return res.status(404).json({ error: 'Material not found.' });
+  const selection = body.selection && typeof body.selection === 'object'
+    ? body.selection
+    : {};
+  const device = body.device && typeof body.device === 'object'
+    ? body.device
+    : {};
+  const research = body.research && typeof body.research === 'object'
+    ? body.research
+    : {};
+  return {
+    materialId,
+    actionType,
+    selection,
+    device,
+    research,
+    clientEventId: String(body.clientEventId || body.client_event_id || '').trim() || null,
+    baseLessonId: body.baseLessonId,
+    actionParams: body.actionParams || body.action_params,
+    operationIndex: body.operationIndex,
+    materialVersionId: body.materialVersionId,
+    replacementText: body.replacementText,
+    normalizedReplacement: body.normalizedReplacement,
+    previousEventId: body.previousEventId,
+    timeSincePreviousMs: body.timeSincePreviousMs,
+    isRepeatedBlockEdit: body.isRepeatedBlockEdit,
+    clientTime: body.clientTime,
+    sessionId: body.sessionId
+  };
+}
 
-  const selection = req.body.selection && typeof req.body.selection === 'object'
-    ? req.body.selection
-    : {};
-  const device = req.body.device && typeof req.body.device === 'object'
-    ? req.body.device
-    : {};
-  const research = req.body.research && typeof req.body.research === 'object'
-    ? req.body.research
-    : {};
-  const clientEventId = String(req.body.clientEventId || req.body.client_event_id || '').trim() || null;
+function insertOperationEventForUser(user, payload, materialCache = new Map()) {
+  const normalized = normalizeOperationPayload(payload);
+  let material = materialCache.get(normalized.materialId);
+  if (!material) {
+    material = getPublishedStudentMaterial(user.id, normalized.materialId);
+    if (!material) {
+      const error = new Error('Material not found.');
+      error.status = 404;
+      throw error;
+    }
+    materialCache.set(normalized.materialId, material);
+  }
 
-  const result = db.prepare(
-    `INSERT OR IGNORE INTO operation_events (
-       client_event_id, user_id, course_id, material_id, student_work_id,
-       base_lesson_id, action_type, action_params_json, selected_text,
-       selected_html, block_id, block_text, operation_index, material_version_id,
-       block_order, block_hash, selected_text_hash, before_text, after_text,
-       before_html, after_html, replacement_text, normalized_replacement,
-       previous_event_id, time_since_previous_ms, is_repeated_block_edit,
-       start_offset, end_offset, client_time, session_id, device_json
-     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    clientEventId,
-    req.user.id,
+  const { selection, research, device } = normalized;
+  const result = db.prepare(OPERATION_EVENT_INSERT_SQL).run(
+    normalized.clientEventId,
+    user.id,
     material.course_id || null,
     material.id,
-    getStudentWorkId(material.id, req.user.id),
-    String(req.body.baseLessonId || material.base_lesson_id || ''),
-    actionType,
-    safeJsonString(req.body.actionParams || req.body.action_params, {}),
+    getStudentWorkId(material.id, user.id),
+    String(normalized.baseLessonId || material.base_lesson_id || ''),
+    normalized.actionType,
+    safeJsonString(normalized.actionParams, {}),
     selection.text == null ? null : String(selection.text),
     selection.html == null ? null : String(selection.html),
     selection.blockId == null ? null : String(selection.blockId),
     selection.blockText == null ? null : String(selection.blockText),
-    nullableNumber(research.operationIndex ?? req.body.operationIndex),
-    nullableString(research.materialVersionId ?? req.body.materialVersionId),
+    nullableNumber(research.operationIndex ?? normalized.operationIndex),
+    nullableString(research.materialVersionId ?? normalized.materialVersionId),
     nullableNumber(research.blockOrder ?? selection.blockOrder),
     nullableString(research.blockHash ?? selection.blockHash),
     nullableString(research.selectedTextHash ?? selection.selectedTextHash),
@@ -272,19 +305,53 @@ router.post('/operation-events', requireRole('student'), (req, res) => {
     nullableString(research.afterText ?? selection.afterText),
     nullableString(research.beforeHtml ?? selection.beforeHtml),
     nullableString(research.afterHtml ?? selection.afterHtml),
-    nullableString(research.replacementText ?? req.body.replacementText),
-    nullableString(research.normalizedReplacement ?? req.body.normalizedReplacement),
-    nullableString(research.previousEventId ?? req.body.previousEventId),
-    nullableNumber(research.timeSincePreviousMs ?? req.body.timeSincePreviousMs),
-    research.isRepeatedBlockEdit || req.body.isRepeatedBlockEdit ? 1 : 0,
+    nullableString(research.replacementText ?? normalized.replacementText),
+    nullableString(research.normalizedReplacement ?? normalized.normalizedReplacement),
+    nullableString(research.previousEventId ?? normalized.previousEventId),
+    nullableNumber(research.timeSincePreviousMs ?? normalized.timeSincePreviousMs),
+    research.isRepeatedBlockEdit || normalized.isRepeatedBlockEdit ? 1 : 0,
     nullableNumber(selection.startOffset),
     nullableNumber(selection.endOffset),
-    req.body.clientTime ? String(req.body.clientTime) : null,
-    req.body.sessionId ? String(req.body.sessionId) : null,
+    normalized.clientTime ? String(normalized.clientTime) : null,
+    normalized.sessionId ? String(normalized.sessionId) : null,
     safeJsonString(device, {})
   );
+  return {
+    clientEventId: normalized.clientEventId,
+    inserted: !!result.changes
+  };
+}
 
-  res.status(result.changes ? 201 : 200).json({ ok: true });
+router.post('/operation-events', requireRole('student'), (req, res) => {
+  try {
+    const result = insertOperationEventForUser(req.user, req.body);
+    res.status(result.inserted ? 201 : 200).json({ ok: true, clientEventId: result.clientEventId });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
+  }
+});
+
+router.post('/operation-events/batch', requireRole('student'), (req, res) => {
+  const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 50) : [];
+  if (!events.length) {
+    return res.status(400).json({ error: 'events are required.' });
+  }
+
+  try {
+    const materialCache = new Map();
+    const writeBatch = db.transaction(() => events.map(event => (
+      insertOperationEventForUser(req.user, event, materialCache)
+    )));
+    const results = writeBatch();
+    res.status(201).json({
+      ok: true,
+      accepted: results.length,
+      inserted: results.filter(result => result.inserted).length,
+      clientEventIds: results.map(result => result.clientEventId).filter(Boolean)
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
+  }
 });
 
 router.get('/summary', requireRole('teacher', 'admin'), (req, res) => {

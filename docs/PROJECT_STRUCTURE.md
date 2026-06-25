@@ -5,8 +5,23 @@
 This project is a self-hosted teaching-material editor.
 The login page is separated from the editor page, and user data is stored in a local SQLite database through an Express API.
 
-## database in window
-C:\Users\hallo\AppData\Local\GakuzaiDemo\gakuzai.sqlite
+## Database location
+
+The database is stored in the project by default:
+
+```text
+D:\桌面\Gakuzai_demo\server\data\gakuzai.sqlite
+```
+
+Database path priority:
+
+1. `GAKUZAI_DB_PATH` if a full SQLite file path is set.
+2. `GAKUZAI_DATA_DIR\gakuzai.sqlite` if a data directory is set.
+3. `server\data\gakuzai.sqlite` by default.
+
+The server does not read from or migrate data from Windows AppData. If an old
+local database exists elsewhere, copy it into `server\data\gakuzai.sqlite`
+manually before starting the server.
 
 ## Directory Layout
 

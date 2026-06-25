@@ -6,7 +6,8 @@
     draft: 'gakuzai.demo.current.v1',
     sidebar: 'gakuzai.sidebar.collapsed.v1',
     authToken: 'gakuzai.auth.token.v1',
-    sessionId: 'gakuzai.research.session.v1'
+    sessionId: 'gakuzai.research.session.v1',
+    operationQueue: 'gakuzai.research.operationQueue.v1'
   };
 
   // 初期表示用の教材データ。
@@ -48,6 +49,10 @@
   const UNDO_MAX = 50;
   const STUDENT_AUTO_SAVE_DEBOUNCE_MS = 8000;
   const STUDENT_AUTO_SAVE_INTERVAL_MS = 60000;
+  const OPERATION_QUEUE_BATCH_SIZE = 20;
+  const OPERATION_QUEUE_FLUSH_DELAY_MS = 2500;
+  const OPERATION_QUEUE_MAX_RETRY_DELAY_MS = 30000;
+  const OPERATION_QUEUE_MAX_ITEMS = 1000;
 
   // 起動時に主要な DOM をまとめて参照しておく。
   const els = {
@@ -244,6 +249,11 @@
     studentAutoSaveQueued: false,
     studentLastAutoSavedAt: null,
     studentLastAutoSaveErrorAt: null,
+    operationQueue: loadOperationQueue(),
+    operationQueueFlushTimer: null,
+    operationQueueInFlight: false,
+    operationQueueRetryCount: 0,
+    operationQueueLastErrorAt: null,
     lastOperationEventId: null,
     lastOperationAt: null
   };
@@ -266,6 +276,19 @@
     } catch {
       return randomId('session');
     }
+  }
+  function loadOperationQueue() {
+    try {
+      const value = JSON.parse(localStorage.getItem(STORAGE_KEYS.operationQueue) || '[]');
+      return Array.isArray(value) ? value.filter(item => item?.payload?.clientEventId).slice(-OPERATION_QUEUE_MAX_ITEMS) : [];
+    } catch {
+      return [];
+    }
+  }
+  function saveOperationQueue() {
+    try {
+      localStorage.setItem(STORAGE_KEYS.operationQueue, JSON.stringify(state.operationQueue.slice(-OPERATION_QUEUE_MAX_ITEMS)));
+    } catch { }
   }
   function normalizeResearchText(text) {
     return String(text || '').replace(/\s+/g, ' ').trim();
@@ -475,6 +498,7 @@
     if (state.authToken) localStorage.setItem(STORAGE_KEYS.authToken, state.authToken);
     else localStorage.removeItem(STORAGE_KEYS.authToken);
     syncAuthUi();
+    if (state.authToken) scheduleOperationQueueFlush(300);
   }
   function redirectToLogin() {
     window.location.href = './index.html';
@@ -2753,10 +2777,75 @@
       clientTime: entry.time || nowIso(),
       device: getDeviceInfo()
     };
-    apiRequest('/api/analytics/operation-events', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }).catch(() => { });
+    enqueueOperationEvent(payload);
+  }
+  function enqueueOperationEvent(payload) {
+    if (!payload?.clientEventId) return;
+    const duplicate = state.operationQueue.some(item => item.payload?.clientEventId === payload.clientEventId);
+    if (duplicate) return;
+    state.operationQueue.push({
+      id: payload.clientEventId,
+      payload,
+      queuedAt: nowIso(),
+      attempts: 0
+    });
+    if (state.operationQueue.length > OPERATION_QUEUE_MAX_ITEMS) {
+      state.operationQueue.splice(0, state.operationQueue.length - OPERATION_QUEUE_MAX_ITEMS);
+    }
+    saveOperationQueue();
+    scheduleOperationQueueFlush();
+  }
+  function scheduleOperationQueueFlush(delay = OPERATION_QUEUE_FLUSH_DELAY_MS) {
+    clearTimeout(state.operationQueueFlushTimer);
+    if (!state.authToken || !state.operationQueue.length) return;
+    state.operationQueueFlushTimer = setTimeout(() => {
+      flushOperationQueue({ reason: 'scheduled' });
+    }, Math.max(0, delay));
+  }
+  async function flushOperationQueue({ keepalive = false, reason = 'manual' } = {}) {
+    if (!state.authToken || state.operationQueueInFlight || !state.operationQueue.length) return false;
+    clearTimeout(state.operationQueueFlushTimer);
+    state.operationQueueFlushTimer = null;
+    const batchSize = keepalive ? Math.min(5, OPERATION_QUEUE_BATCH_SIZE) : OPERATION_QUEUE_BATCH_SIZE;
+    const batch = state.operationQueue.slice(0, batchSize);
+    const body = JSON.stringify({ events: batch.map(item => item.payload), reason });
+    state.operationQueueInFlight = true;
+    try {
+      const response = await fetch('/api/analytics/operation-events/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${state.authToken}`
+        },
+        body,
+        keepalive
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(translateApiError(data.error) || '通信に失敗しました。');
+        error.status = response.status;
+        throw error;
+      }
+      const acceptedIds = new Set(Array.isArray(data.clientEventIds) ? data.clientEventIds : batch.map(item => item.id));
+      state.operationQueue = state.operationQueue.filter(item => !acceptedIds.has(item.id));
+      state.operationQueueRetryCount = 0;
+      saveOperationQueue();
+      if (state.operationQueue.length) scheduleOperationQueueFlush(400);
+      return true;
+    } catch (error) {
+      state.operationQueueLastErrorAt = nowIso();
+      state.operationQueueRetryCount += 1;
+      for (const item of batch) item.attempts = Number(item.attempts || 0) + 1;
+      saveOperationQueue();
+      const retryDelay = Math.min(
+        OPERATION_QUEUE_MAX_RETRY_DELAY_MS,
+        OPERATION_QUEUE_FLUSH_DELAY_MS * (2 ** Math.min(state.operationQueueRetryCount, 4))
+      );
+      scheduleOperationQueueFlush(retryDelay);
+      return false;
+    } finally {
+      state.operationQueueInFlight = false;
+    }
   }
   async function loadRemotePrefs() {
     if (!state.currentUser) return;
@@ -2777,6 +2866,7 @@
       const data = await apiRequest('/api/auth/me');
       state.currentUser = data.user;
       syncAuthUi();
+      scheduleOperationQueueFlush(300);
       await loadRemotePrefs();
       await refreshCourses();
       await refreshSaves();
@@ -3043,6 +3133,7 @@
 
   function handleLogout() {
     recordEvent('auth_logout');
+    flushOperationQueue({ reason: 'logout' });
     setAuthSession('', null);
     state.savesCache = [];
     state.currentSavedId = null;
@@ -5358,10 +5449,21 @@
     window.visualViewport?.addEventListener('resize', syncViewportBottomOffset);
     window.visualViewport?.addEventListener('scroll', syncViewportBottomOffset);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') flushStudentAutoSave({ silent: true, keepalive: true, reason: 'hidden' });
+      if (document.visibilityState === 'hidden') {
+        flushOperationQueue({ keepalive: true, reason: 'hidden' });
+        flushStudentAutoSave({ silent: true, keepalive: true, reason: 'hidden' });
+      } else {
+        scheduleOperationQueueFlush(300);
+      }
     });
-    window.addEventListener('pagehide', () => flushStudentAutoSave({ silent: true, keepalive: true, reason: 'pagehide' }));
-    window.addEventListener('beforeunload', () => flushStudentAutoSave({ silent: true, keepalive: true, reason: 'beforeunload' }));
+    window.addEventListener('pagehide', () => {
+      flushOperationQueue({ keepalive: true, reason: 'pagehide' });
+      flushStudentAutoSave({ silent: true, keepalive: true, reason: 'pagehide' });
+    });
+    window.addEventListener('beforeunload', () => {
+      flushOperationQueue({ keepalive: true, reason: 'beforeunload' });
+      flushStudentAutoSave({ silent: true, keepalive: true, reason: 'beforeunload' });
+    });
     startStudentAutoSaveLoop();
 
     els.sidebarToggleBtn?.addEventListener('click', () => {

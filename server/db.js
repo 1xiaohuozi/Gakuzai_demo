@@ -3,18 +3,12 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const workspaceDataDir = path.join(__dirname, 'data');
-const defaultDataDir = process.env.LOCALAPPDATA
-  ? path.join(process.env.LOCALAPPDATA, 'GakuzaiDemo')
-  : workspaceDataDir;
+const defaultDataDir = workspaceDataDir;
 const dataDir = process.env.GAKUZAI_DATA_DIR || defaultDataDir;
 const dbPath = process.env.GAKUZAI_DB_PATH || path.join(dataDir, 'gakuzai.sqlite');
-const legacyDbPath = path.join(workspaceDataDir, 'gakuzai.sqlite');
 const schemaPath = path.join(__dirname, 'schema.sql');
 
 fs.mkdirSync(dataDir, { recursive: true });
-if (!process.env.GAKUZAI_DB_PATH && !fs.existsSync(dbPath) && fs.existsSync(legacyDbPath)) {
-  fs.copyFileSync(legacyDbPath, dbPath);
-}
 
 let db;
 
@@ -235,8 +229,14 @@ function prepare(sql) {
   };
 }
 
+function transaction(fn) {
+  return getDb().transaction(fn);
+}
+
 module.exports = {
   initDb,
   prepare,
-  dataDir
+  transaction,
+  dataDir,
+  dbPath
 };

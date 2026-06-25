@@ -169,6 +169,24 @@ function saveSubmissionFile(file, assignmentId, studentId) {
   };
 }
 
+function canAccessSubmissionFile(user, storedName) {
+  const rows = db.prepare(
+    `SELECT s.student_id, s.answer_json, a.course_id
+     FROM assignment_submissions s
+     JOIN assignments a ON a.id = s.assignment_id
+     WHERE s.answer_json LIKE ?`
+  ).all(`%${storedName}%`);
+
+  for (const row of rows) {
+    const answer = safeJson(row.answer_json, {});
+    if (answer?.file?.storedName !== storedName) continue;
+    if (user.role === 'admin') return true;
+    if (user.role === 'student' && Number(row.student_id) === Number(user.id)) return true;
+    if (canTeachCourse(user, row.course_id)) return true;
+  }
+  return false;
+}
+
 function normalizeChoicePayload(body) {
   const choices = Array.isArray(body.choices)
     ? body.choices.map(choice => String(choice || '').trim()).filter(Boolean)
@@ -334,6 +352,9 @@ router.get('/submission-files/:name', (req, res) => {
   if (!storedName) return res.status(404).json({ error: 'File not found.' });
   const filePath = path.join(uploadDir, storedName);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found.' });
+  if (!canAccessSubmissionFile(req.user, storedName)) {
+    return res.status(403).json({ error: 'Permission denied.' });
+  }
   res.sendFile(filePath);
 });
 

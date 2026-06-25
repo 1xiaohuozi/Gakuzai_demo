@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -26,7 +27,15 @@ app.use(helmet({
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '25mb' }));
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 300,
+  limit: Number(process.env.API_RATE_LIMIT || 2000),
+  keyGenerator: req => {
+    const authorization = req.get('authorization') || '';
+    if (authorization.startsWith('Bearer ')) {
+      return `token:${crypto.createHash('sha256').update(authorization).digest('hex').slice(0, 24)}`;
+    }
+    return `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+  },
+  message: { error: 'Too many requests. Please wait a moment and try again.' },
   standardHeaders: true,
   legacyHeaders: false
 }));

@@ -49,6 +49,9 @@
   const UNDO_MAX = 50;
   const STUDENT_AUTO_SAVE_DEBOUNCE_MS = 8000;
   const STUDENT_AUTO_SAVE_INTERVAL_MS = 60000;
+  // 高同時接続対策：学習操作ログは1件ずつ即時送信せず、ブラウザ側で小さなバッチにまとめて送信する。
+  // 40人程度の授業で同時に加工操作が発生しても、HTTPリクエスト数とSQLiteの書き込みロック回数を抑えるための設定。
+  // 例：40人×20操作でも、理想的には800リクエストではなく40前後のバッチリクエストに圧縮される。
   const OPERATION_QUEUE_BATCH_SIZE = 20;
   const OPERATION_QUEUE_FLUSH_DELAY_MS = 2500;
   const OPERATION_QUEUE_MAX_RETRY_DELAY_MS = 30000;
@@ -249,9 +252,14 @@
     studentAutoSaveQueued: false,
     studentLastAutoSavedAt: null,
     studentLastAutoSaveErrorAt: null,
+    // 高同時接続対策用の操作ログ送信キュー。
+    // localStorageから復元するため、通信失敗・画面更新・一時的なオフライン状態でも未送信ログを保持できる。
     operationQueue: loadOperationQueue(),
+    // キュー送信を少し遅延させるためのタイマー。短時間に連続した操作を1つのバッチにまとめる。
     operationQueueFlushTimer: null,
+    // 同じブラウザから同時に複数のバッチ送信が走らないようにするフラグ。
     operationQueueInFlight: false,
+    // 送信失敗時の指数バックオフ制御に使う連続失敗回数。
     operationQueueRetryCount: 0,
     operationQueueLastErrorAt: null,
     lastOperationEventId: null,
@@ -279,6 +287,8 @@
   }
   function loadOperationQueue() {
     try {
+      // 未送信の操作ログをlocalStorageから復元する。
+      // clientEventIdを持つ項目だけを採用し、キューが肥大化しすぎないよう末尾から上限件数だけ残す。
       const value = JSON.parse(localStorage.getItem(STORAGE_KEYS.operationQueue) || '[]');
       return Array.isArray(value) ? value.filter(item => item?.payload?.clientEventId).slice(-OPERATION_QUEUE_MAX_ITEMS) : [];
     } catch {
@@ -287,6 +297,8 @@
   }
   function saveOperationQueue() {
     try {
+      // 送信前のログを永続化しておく。
+      // 授業中に一時的な通信断やリロードが発生しても、次回ログイン後に再送できる。
       localStorage.setItem(STORAGE_KEYS.operationQueue, JSON.stringify(state.operationQueue.slice(-OPERATION_QUEUE_MAX_ITEMS)));
     } catch { }
   }
@@ -1343,10 +1355,10 @@
               </thead>
               <tbody>
                 ${orderedAssignments.map(item => {
-          const stateInfo = getStudentAssignmentState(item);
-          const type = item.assignmentType || 'choice';
-          const submitted = item.submission;
-          return `
+      const stateInfo = getStudentAssignmentState(item);
+      const type = item.assignmentType || 'choice';
+      const submitted = item.submission;
+      return `
                   <tr class="${submitted ? 'is-submitted-row' : 'is-pending-row'}">
                     <td><span class="student-assignment-status student-assignment-status--${stateInfo.tone}">${esc(stateInfo.label)}</span></td>
                     <td><strong>${esc(item.title)}</strong><span>${esc(item.questionText)}</span></td>
@@ -1360,7 +1372,7 @@
                       </div>
                     </td>
                   </tr>`;
-        }).join('')}
+    }).join('')}
               </tbody>
             </table>
           </div>
@@ -2779,8 +2791,11 @@
     };
     enqueueOperationEvent(payload);
   }
+  // 操作ログを送信用キューに積む。
+  // ここではサーバーへ直接送らず、まずブラウザ内に保存することで、同時アクセス時の瞬間的な負荷を平準化する。
   function enqueueOperationEvent(payload) {
     if (!payload?.clientEventId) return;
+    // clientEventIdは操作ログの一意ID。二重クリックや再送処理で同じログが重複してキューに入るのを防ぐ。
     const duplicate = state.operationQueue.some(item => item.payload?.clientEventId === payload.clientEventId);
     if (duplicate) return;
     state.operationQueue.push({
@@ -2789,12 +2804,16 @@
       queuedAt: nowIso(),
       attempts: 0
     });
+    // キューが大きくなりすぎるとlocalStorage容量や画面性能に影響するため、古い未送信ログから整理する。
+    // 通常運用ではここに到達しない想定だが、長時間オフライン時の安全弁として置いている。
     if (state.operationQueue.length > OPERATION_QUEUE_MAX_ITEMS) {
       state.operationQueue.splice(0, state.operationQueue.length - OPERATION_QUEUE_MAX_ITEMS);
     }
     saveOperationQueue();
     scheduleOperationQueueFlush();
   }
+  // キュー送信を予約する。
+  // すぐ送らず数秒待つことで、連続操作をまとめ、40人同時利用時のリクエスト数を削減する。
   function scheduleOperationQueueFlush(delay = OPERATION_QUEUE_FLUSH_DELAY_MS) {
     clearTimeout(state.operationQueueFlushTimer);
     if (!state.authToken || !state.operationQueue.length) return;
@@ -2802,12 +2821,18 @@
       flushOperationQueue({ reason: 'scheduled' });
     }, Math.max(0, delay));
   }
+  // キュー内の操作ログをバッチ送信する。
+  // 通常時は最大20件ずつ、ページ離脱時のkeepalive送信ではブラウザ制限を考慮して最大5件ずつ送る。
   async function flushOperationQueue({ keepalive = false, reason = 'manual' } = {}) {
+    // 未ログイン・送信中・空キューの場合は何もしない。
+    // operationQueueInFlightにより、同じブラウザから同時に複数バッチが飛ぶことを避ける。
     if (!state.authToken || state.operationQueueInFlight || !state.operationQueue.length) return false;
     clearTimeout(state.operationQueueFlushTimer);
     state.operationQueueFlushTimer = null;
     const batchSize = keepalive ? Math.min(5, OPERATION_QUEUE_BATCH_SIZE) : OPERATION_QUEUE_BATCH_SIZE;
     const batch = state.operationQueue.slice(0, batchSize);
+    // サーバー側の /api/analytics/operation-events/batch にまとめて送る。
+    // サーバーでは1バッチをSQLiteトランザクションで処理するため、単発送信よりロック競合が少ない。
     const body = JSON.stringify({ events: batch.map(item => item.payload), reason });
     state.operationQueueInFlight = true;
     try {
@@ -2826,17 +2851,23 @@
         error.status = response.status;
         throw error;
       }
+      // サーバーが受理したclientEventIdだけをキューから削除する。
+      // 再送時もサーバー側はINSERT OR IGNOREで重複登録しないため、通信の不確実性に強い。
       const acceptedIds = new Set(Array.isArray(data.clientEventIds) ? data.clientEventIds : batch.map(item => item.id));
       state.operationQueue = state.operationQueue.filter(item => !acceptedIds.has(item.id));
       state.operationQueueRetryCount = 0;
       saveOperationQueue();
+      // まだキューに残りがある場合は、短い間隔で次のバッチを続けて送る。
       if (state.operationQueue.length) scheduleOperationQueueFlush(400);
       return true;
     } catch (error) {
+      // 失敗した場合はキューを消さずに保持し、指数バックオフで再送する。
+      // これにより、サーバーが混雑している時にクライアント側の再試行が負荷をさらに増やすことを防ぐ。
       state.operationQueueLastErrorAt = nowIso();
       state.operationQueueRetryCount += 1;
       for (const item of batch) item.attempts = Number(item.attempts || 0) + 1;
       saveOperationQueue();
+      // 再送間隔：2.5秒 → 5秒 → 10秒 → 20秒 → 最大30秒。
       const retryDelay = Math.min(
         OPERATION_QUEUE_MAX_RETRY_DELAY_MS,
         OPERATION_QUEUE_FLUSH_DELAY_MS * (2 ** Math.min(state.operationQueueRetryCount, 4))
@@ -2844,6 +2875,7 @@
       scheduleOperationQueueFlush(retryDelay);
       return false;
     } finally {
+      // 次のバッチ送信を許可する。
       state.operationQueueInFlight = false;
     }
   }
@@ -5450,17 +5482,22 @@
     window.visualViewport?.addEventListener('scroll', syncViewportBottomOffset);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
+        // タブ切替・画面ロック・ブラウザ最小化などでページが非表示になる直前に、残っている操作ログを小バッチで送る。
+        // keepaliveを使うため、通常送信より件数を絞り、ブラウザの送信サイズ制限に引っかかりにくくしている。
         flushOperationQueue({ keepalive: true, reason: 'hidden' });
         flushStudentAutoSave({ silent: true, keepalive: true, reason: 'hidden' });
       } else {
+        // ページが再表示されたら、非表示中に残ったログの再送をすぐ予約する。
         scheduleOperationQueueFlush(300);
       }
     });
     window.addEventListener('pagehide', () => {
+      // ページ遷移・リロード・戻る操作の直前に、未送信ログを可能な範囲で送信する。
       flushOperationQueue({ keepalive: true, reason: 'pagehide' });
       flushStudentAutoSave({ silent: true, keepalive: true, reason: 'pagehide' });
     });
     window.addEventListener('beforeunload', () => {
+      // ブラウザ終了・タブ閉じの直前に、最後の保険としてkeepalive送信を試みる。
       flushOperationQueue({ keepalive: true, reason: 'beforeunload' });
       flushStudentAutoSave({ silent: true, keepalive: true, reason: 'beforeunload' });
     });

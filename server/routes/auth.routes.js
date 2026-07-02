@@ -75,7 +75,7 @@ router.post('/register', async (req, res) => {
   if (existing) {
     return res.status(409).json({ error: 'Email is already registered.' });
   }
-
+// Hash the password and insert the new user into the database
   const passwordHash = await bcrypt.hash(password, 12);
   const result = db.prepare(
     'INSERT INTO users (email, password_hash, display_name, role) VALUES (?, ?, ?, ?)'

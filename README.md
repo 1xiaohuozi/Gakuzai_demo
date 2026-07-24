@@ -333,4 +333,4 @@ This demo is suitable for small classroom experiments, not for a large public pr
 ## License / ライセンス
 
 This repository is currently marked as private in `package.json`.  
-ライセンスを公開する場合は、用途に合わせて `LICENSE` ファイルを追加してください。
+ライセンスを公開する場合は、用途に合わせて `LICENSE` ファイルを追加してください。   

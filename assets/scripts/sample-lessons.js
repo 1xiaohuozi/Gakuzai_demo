@@ -36,6 +36,15 @@
         },
 
         {
+          id: 'digital-logic-gates-20260723',
+          title: 'デジタル回路：真理値表とゲート素子',
+          html: `
+            <h2 data-block-id="digital-logic-imported-placeholder">デジタル回路：真理値表とゲート素子</h2>
+            <p data-block-id="digital-logic-imported-placeholder-desc">授業コード DIGI2026 の教材として使用します。</p>
+          `
+        },
+
+        {
           id: 'lesson-3',
           title: 'Adaptive Learning and AI Ethics',
           html: `

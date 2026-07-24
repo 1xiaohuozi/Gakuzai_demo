@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520">
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 34px "Arial", "Yu Gothic", sans-serif; fill: #0f172a; }
+      .sub { font: 500 17px "Arial", "Yu Gothic", sans-serif; fill: #475569; }
+      .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 18; }
+      .head { font: 700 22px "Arial", "Yu Gothic", sans-serif; fill: #0f172a; }
+      .body { font: 500 16px "Arial", "Yu Gothic", sans-serif; fill: #334155; }
+      .small { font: 500 14px "Arial", "Yu Gothic", sans-serif; fill: #64748b; }
+      .arrow { stroke: #64748b; stroke-width: 3.5; fill: none; marker-end: url(#arrow); }
+      .badge { fill: #e0f2fe; stroke: #7dd3fc; stroke-width: 1.5; rx: 14; }
+      .badgeText { font: 700 13px "Arial", "Yu Gothic", sans-serif; fill: #075985; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="8" refX="11" refY="4" orient="auto">
+      <polygon points="0 0, 12 4, 0 8" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1200" height="520"/>
+  <text x="54" y="62" class="title">GAKUZAI System Overview</text>
+  <text x="54" y="94" class="sub">Local classroom deployment for interactive textbook editing and learning-log collection.</text>
+
+  <rect x="54" y="150" width="245" height="210" class="box"/>
+  <text x="88" y="196" class="head">Students</text>
+  <text x="88" y="232" class="body">Browser access</text>
+  <text x="88" y="260" class="body">Join by course code</text>
+  <text x="88" y="288" class="body">Edit textbook</text>
+  <text x="88" y="316" class="body">Save learning work</text>
+
+  <rect x="375" y="150" width="245" height="210" class="box"/>
+  <text x="409" y="196" class="head">Frontend</text>
+  <text x="409" y="232" class="body">HTML / CSS / JS</text>
+  <text x="409" y="260" class="body">Toolbar actions</text>
+  <text x="409" y="288" class="body">Autosave queue</text>
+  <text x="409" y="316" class="body">Batch log sending</text>
+
+  <rect x="696" y="150" width="245" height="210" class="box"/>
+  <text x="730" y="196" class="head">Backend</text>
+  <text x="730" y="232" class="body">Node.js / Express</text>
+  <text x="730" y="260" class="body">JWT authentication</text>
+  <text x="730" y="288" class="body">Course/material APIs</text>
+  <text x="730" y="316" class="body">Analytics APIs</text>
+
+  <rect x="1017" y="150" width="130" height="210" class="box"/>
+  <text x="1046" y="196" class="head">SQLite</text>
+  <text x="1043" y="232" class="body">WAL</text>
+  <text x="1038" y="260" class="body">Local DB</text>
+  <text x="1038" y="288" class="body">Logs</text>
+  <text x="1038" y="316" class="body">Works</text>
+
+  <path d="M 299 255 L 373 255" class="arrow"/>
+  <path d="M 620 255 L 694 255" class="arrow"/>
+  <path d="M 941 255 L 1015 255" class="arrow"/>
+
+  <rect x="98" y="396" width="200" height="30" class="badge"/>
+  <text x="122" y="416" class="badgeText">Classroom LAN</text>
+  <rect x="415" y="396" width="200" height="30" class="badge"/>
+  <text x="437" y="416" class="badgeText">Queue + Retry</text>
+  <rect x="728" y="396" width="222" height="30" class="badge"/>
+  <text x="750" y="416" class="badgeText">Batch Transactions</text>
+  <rect x="1017" y="396" width="130" height="30" class="badge"/>
+  <text x="1041" y="416" class="badgeText">WAL Mode</text>
+</svg>

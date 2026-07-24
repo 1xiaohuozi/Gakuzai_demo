@@ -1396,7 +1396,14 @@
     }
     const materials = getCourseMaterials(course.id);
     if (role === 'student') {
-      const assignmentGroups = groupAssignmentsByMaterial(state.assignmentsCache || [], materials);
+      const publishedMaterials = (materials || []).filter(item => item.status === 'published');
+      const assignments = state.assignmentsCache || [];
+      const assignmentGroups = publishedMaterials.map(material => ({
+        materialId: material.id,
+        materialTitle: material.title || '教材未設定',
+        materialStatus: material.status || '',
+        assignments: assignments.filter(item => String(item.materialId) === String(material.id))
+      }));
       const selectedGroup = getSelectedAssignmentMaterial(assignmentGroups);
       if (selectedGroup && String(state.selectedAssignmentMaterialId || '') !== String(selectedGroup.materialId)) {
         state.selectedAssignmentMaterialId = selectedGroup.materialId;
@@ -1424,8 +1431,9 @@
                 ${assignmentGroups.length ? assignmentGroups.map(group => {
         const stats = getAssignmentGroupStats(group.assignments);
         const incomplete = Math.max(0, stats.total - stats.submitted);
-        return `<option value="${group.materialId}" ${String(selectedGroup?.materialId) === String(group.materialId) ? 'selected' : ''}>${esc(group.materialTitle)}${incomplete ? `（未完了 ${incomplete}）` : '（完了）'}</option>`;
-      }).join('') : '<option value="">課題なし</option>'}
+        const statusLabel = stats.total ? (incomplete ? `（未完了 ${incomplete}）` : '（完了）') : '（課題なし）';
+        return `<option value="${group.materialId}" ${String(selectedGroup?.materialId) === String(group.materialId) ? 'selected' : ''}>${esc(group.materialTitle)}${statusLabel}</option>`;
+      }).join('') : '<option value="">教材なし</option>'}
               </select>
             </label>
             <div class="admin-toolbar__metrics">
@@ -1434,7 +1442,7 @@
               <span>${selectedStats.total - selectedStats.submitted ? `未完了 ${selectedStats.total - selectedStats.submitted}` : '完了'}</span>
             </div>
             <div class="admin-toolbar__actions">
-              <button class="sa-btn sa-btn--ghost" type="button" data-view="courses">教材を見る</button>
+              <button class="sa-btn sa-btn--ghost" type="button" ${selectedGroup?.materialId ? `data-course-action="open-material" data-id="${selectedGroup.materialId}"` : 'data-view="courses"'}>教材を見る</button>
             </div>
           </div>
           ${assignmentGroups.length && selectedGroup ? renderStudentAssignments(selectedGroup.assignments, selectedGroup.materialTitle) : '<div class="data-empty">この授業にはまだ公開中の練習問題がありません。</div>'}
@@ -3239,7 +3247,11 @@
     const byTitle = dir => (a, b) => { const ta = (a.title || '').toLowerCase(), tb = (b.title || '').toLowerCase(); if (ta < tb) return dir === 'asc' ? -1 : 1; if (ta > tb) return dir === 'asc' ? 1 : -1; return 0; };
     switch (key) { case 'updated_asc': return byDate('updatedAt', 'asc'); case 'created_desc': return byDate('createdAt', 'desc'); case 'created_asc': return byDate('createdAt', 'asc'); case 'title_asc': return byTitle('asc'); case 'title_desc': return byTitle('desc'); default: return byDate('updatedAt', 'desc'); }
   }
-  function findLessonTitle(id) { return SAMPLE_LESSONS.find(l => l.id === id)?.title || '不明な教材'; }
+  function findLessonTitle(id) {
+    const sampleLesson = SAMPLE_LESSONS.find(lesson => lesson.id === id);
+    if (sampleLesson) return sampleLesson.title;
+    return id ? '取込教材' : '未設定';
+  }
 
   function openTeacherMaterial(id) {
     const item = (state.courseMaterialsCache || []).find(material => String(material.id) === String(id));
@@ -3771,38 +3783,6 @@
     };
   }
 
-  // 実際の装飾適用はここに集約し、Undo と操作ログの整合を保つ。
-  function applyCurrentActionToSelection() {
-    if (!state.currentAction) return;
-    const selection = getSelectionInfo();
-    if (!selection) return;
-    pushUndo();
-    switch (state.currentAction) {
-      case 'keyword': applyKeyword(els.lessonContainer, state.currentOptions.keywordText); addLog({ action: 'keyword', keyword: state.currentOptions.keywordText || '▽', time: nowIso(), selection }); break;
-      case 'color-blue': applyColor(els.lessonContainer, '#0000cd'); addLog({ action: 'color', color: 'blue', time: nowIso(), selection }); break;
-      case 'color-red': applyColor(els.lessonContainer, '#ff6347'); addLog({ action: 'color', color: 'red', time: nowIso(), selection }); break;
-      case 'marker-yellow': applyMarker(els.lessonContainer, '#ffff00'); addLog({ action: 'marker', color: 'yellow', time: nowIso(), selection }); break;
-      case 'marker-green': applyMarker(els.lessonContainer, '#7fff00'); addLog({ action: 'marker', color: 'green', time: nowIso(), selection }); break;
-      case 'marker-pink': applyMarker(els.lessonContainer, '#ffc0cb'); addLog({ action: 'marker', color: 'pink', time: nowIso(), selection }); break;
-      case 'strong': applyEmphasis(els.lessonContainer, 'strong'); addLog({ action: 'emphasis', type: 'bold', time: nowIso(), selection }); break;
-      case 'underline': applyEmphasis(els.lessonContainer, 'underline'); addLog({ action: 'emphasis', type: 'underline', time: nowIso(), selection }); break;
-      case 'size-small': applyFontSize(els.lessonContainer, '12px'); addLog({ action: 'font-size', size: 'small', time: nowIso(), selection }); break;
-      case 'size-large': applyFontSize(els.lessonContainer, '24px'); addLog({ action: 'font-size', size: 'large', time: nowIso(), selection }); break;
-      case 'popup': applyPopup(els.lessonContainer, state.currentOptions.popupText); addLog({ action: 'popup', text: state.currentOptions.popupText, time: nowIso(), selection }); break;
-      case 'clear-style': clearSelectionStyle(els.lessonContainer); addLog({ action: 'clear-style', time: nowIso(), selection }); break;
-    }
-    recordEvent('editor_action_apply', { action: state.currentAction, selection });
-    els.hint.textContent = '同じ機能を他の箇所にも適用できます。終了する場合は ESC を押してください。';
-    saveDraft();
-  }
-
-  function clearCurrentAction() { state.currentAction = null; state.currentOptions = {}; state.activeActionId = null; syncActiveButtons(); hideMobileSelectionBar(); els.hint.textContent = 'ツールを選択してから、本文中の語句をドラッグしてください。'; }
-  function handleToolbarAction(action, options) {
-    const { keywordText, popupText } = options; if (action === 'popup' && !popupText) { els.hint.textContent = 'ポップアップの文言を入力してからボタンを押してください。'; return; } state.currentAction = action; state.currentOptions = { keywordText, popupText }; state.activeActionId = action; syncActiveButtons(); const hints = { keyword: '【非表示・キーワード化】キーワード化したい語句をドラッグして選択してください。', 'color-blue': '【文字色：青】色を付けたい語句をドラッグしてください。', 'color-red': '【文字色：赤】色を付けたい語句をドラッグしてください。', 'marker-yellow': '【マーカー：黄】ハイライトしたい語句をドラッグしてください。', 'marker-green': '【マーカー：緑】ハイライトしたい語句をドラッグしてください。', 'marker-pink': '【マーカー：ピンク】ハイライトしたい語句をドラッグしてください。', strong: '【強調（太字）】強調したい語句をドラッグしてください。', underline: '【下線】下線を付けたい語句をドラッグしてください。', 'size-small': '【小さい文字】サイズを小さくしたい語句をドラッグしてください。', 'size-large': '【大きい文字】サイズを大きくしたい語句をドラッグしてください。', popup: '【ポップアップ】補足を付けたい語句をドラッグしてください。', 'clear-style': '【装飾解除】元に戻したい部分の語句をドラッグしてください。' };
-    els.hint.textContent = hints[action] || 'まずツールバーのボタンを押してから、編集したい語句をドラッグしてください。';
-    if (isTouchMode()) { const sel = getLessonSelection(); if (sel) handleTouchSelectionChange(); else hideMobileSelectionBar(); }
-  }
-
   // タッチ端末では選択が不安定になりやすいため、直前の Range を退避して再適用できるようにする。
   function getLessonSelection() { const sel = window.getSelection(); if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null; const range = sel.getRangeAt(0); return els.lessonContainer.contains(range.commonAncestorContainer) ? sel : null; }
   function getSelectionKey(sel) { if (!sel || sel.rangeCount === 0) return ''; const range = sel.getRangeAt(0); return [sel.toString(), range.startOffset, range.endOffset, range.startContainer?.nodeType, range.endContainer?.nodeType].join('|'); }
@@ -3811,14 +3791,10 @@
   function clearTouchApplyTimer() { if (state.touchApplyTimer) { clearTimeout(state.touchApplyTimer); state.touchApplyTimer = null; } }
   function lockTouchSelectionUi(ms = 420) { state.touchSelectionUiLock = true; clearTimeout(state.touchSelectionUiLockTimer); state.touchSelectionUiLockTimer = setTimeout(() => state.touchSelectionUiLock = false, ms); }
   function hideMobileSelectionBar(preserveRange = false) { clearTouchApplyTimer(); els.mobileSelectionBar.hidden = true; els.mobileSelectionBar.classList.remove('is-auto', 'is-confirm'); if (!preserveRange) { state.lastTouchSelectionKey = ''; state.lastTouchRange = null; } }
-  function showMobileSelectionBar(mode = 'confirm') { const labelMap = { keyword: '非表示・キーワード化', popup: 'ポップアップ追加', 'color-blue': '文字色：青', 'color-red': '文字色：赤', 'marker-yellow': 'マーカー：黄', 'marker-green': 'マーカー：緑', 'marker-pink': 'マーカー：ピンク', strong: '強調：太字', underline: '強調：下線', 'size-small': '文字サイズ：小', 'size-large': '文字サイズ：大', 'clear-style': '装飾解除' }; const actionLabel = labelMap[state.currentAction] || '選択中の機能'; els.mobileSelectionBar.hidden = false; els.mobileSelectionBar.classList.toggle('is-auto', mode === 'auto'); els.mobileSelectionBar.classList.toggle('is-confirm', mode !== 'auto'); els.mobileSelectionLabel.textContent = mode === 'auto' ? `${actionLabel} を自動で適用します…` : `${actionLabel} を選択範囲に適用できます`; els.mobileSelectionApplyBtn.textContent = mode === 'auto' ? '今すぐ適用' : '適用'; }
   function applyTouchSelection(force = false) { clearTouchApplyTimer(); let activeSel = getLessonSelection(); if (!activeSel) { const restored = restoreTouchRange(); if (!restored && !force) return false; activeSel = getLessonSelection(); } if (!activeSel && !force) return false; applyCurrentActionToSelection(); window.getSelection()?.removeAllRanges(); hideMobileSelectionBar(); return true; }
   function scheduleTouchAutoApply(sel) { clearTouchApplyTimer(); const selectionKey = getSelectionKey(sel); state.lastTouchSelectionKey = selectionKey; captureTouchRange(sel); showMobileSelectionBar('auto'); state.touchApplyTimer = setTimeout(() => { const currentSel = getLessonSelection(); const currentKey = currentSel ? getSelectionKey(currentSel) : state.lastTouchSelectionKey; if (currentKey !== selectionKey) return; applyTouchSelection(true); }, 650); }
   function handleTouchSelectionChange() { if (!isTouchMode()) return; if (state.touchSelectionUiLock) return; if (!state.currentAction) { hideMobileSelectionBar(); return; } const sel = getLessonSelection(); if (!sel) { if (!els.mobileSelectionBar.hidden && state.lastTouchRange) return; hideMobileSelectionBar(); return; } captureTouchRange(sel); state.lastTouchSelectionKey = getSelectionKey(sel); if (TOUCH_AUTO_ACTIONS.has(state.currentAction)) scheduleTouchAutoApply(sel); }
 
-  function renderMoveControls(kind, id) { return `<span class="mobile-sort-controls"><button type="button" class="mobile-sort-btn" data-mobile-move-kind="${kind}" data-mobile-move-id="${id}" data-mobile-move-delta="-1">↑</button><button type="button" class="mobile-sort-btn" data-mobile-move-kind="${kind}" data-mobile-move-id="${id}" data-mobile-move-delta="1">↓</button></span>`; }
-  function renderActionButton(action, groupId) { const activeClass = state.activeActionId === action.id ? ' is-active' : ''; return `<button type="button" class="tool-btn tool-btn--${action.tone || 'dark'}${activeClass}" data-action-id="${action.id}" data-group-id="${groupId}"><span class="tool-btn__drag" draggable="true" data-drag-handle="action" data-action-id="${action.id}" data-group-id="${groupId}">⋮⋮</span><span class="tool-btn__label">${action.label}</span><span class="tool-btn__hint">${action.hint || ''}</span>${state.sortMode && isMobileLayout() ? `<span class="tool-btn__sort">${renderMoveControls('action', action.id)}</span>` : ''}</button>`; }
-  function renderGroup(group) { const items = (state.prefs.itemOrder[group.id] || []).map(id => ACTION_MAP.get(id)).filter(Boolean); const inputs = group.id === 'conceal' ? `<div class="tool-group__inputs"><label class="toolbar-field"><span class="toolbar-field__label">キーワード <small>空なら非表示</small></span><input id="keywordText" class="toolbar-input" type="text" placeholder="例：▽ / キーワードを入力"></label><label class="toolbar-field"><span class="toolbar-field__label">ポップアップテキスト</span><input id="popupText" class="toolbar-input" type="text" placeholder="例：補足説明・語句の意味を入力"></label><label class="toolbar-field"><span class="toolbar-field__label">画像追加 <small>貼付/ドラッグも可</small></span><input id="imageInput" class="toolbar-input" type="file" accept="image/*"></label></div>` : ''; return `<section class="tool-group${items.length ? '' : ' is-empty'}" data-group-id="${group.id}" id="tool-group-${group.id}"><div class="tool-group__head"><div class="tool-group__head-main"><div class="tool-group__title-row"><div class="tool-group__title">${group.title}</div><div class="tool-group__meta">${group.meta}</div></div><div class="tool-group__subtitle">${group.subtitle}</div></div><div class="tool-group__head-actions">${state.sortMode && isMobileLayout() ? renderMoveControls('group', group.id) : ''}<span class="tool-group__drag" draggable="true" data-drag-handle="group" data-group-id="${group.id}">⋮⋮</span></div></div><div class="tool-group__body">${inputs}<div class="tool-group__buttons" data-group-id="${group.id}">${items.map(action => renderActionButton(action, group.id)).join('')}</div><div class="tool-group__empty">ここにボタンをドラッグ</div></div></section>`; }
   function syncPrefsButton() { els.toolbarPrefsBtn.classList.toggle('is-open', state.sortMode); els.toolbarPrefsBtn.setAttribute('aria-expanded', String(state.sortMode)); const stateBadge = els.toolbarPrefsBtn.querySelector('.toolbar-toggle-btn__state'); if (stateBadge) stateBadge.textContent = state.sortMode ? 'ON' : 'OFF'; }
   function syncActiveButtons() { document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.toggle('is-active', btn.dataset.actionId === state.activeActionId)); }
   function getScrollBox() { return els.toolbar.querySelector('.tool-groups'); }
@@ -3901,21 +3877,6 @@
     }, 320);
   }
 
-  function renderToolbar() {
-    syncPrefsButton();
-    els.toolbar.classList.toggle('is-sort-mode', state.sortMode);
-    els.toolbar.innerHTML = `${state.sortMode ? `<div class="toolbar-sort-banner"><div><div class="toolbar-sort-banner__title">並べ替えモード</div><div class="toolbar-sort-banner__meta">PCはドラッグ、スマホは↑↓で順番を変えられます。</div></div><button type="button" id="tbResetLayout" class="toolbar-reset-btn">初期配置に戻す</button></div>` : ''}<div class="tool-groups">${state.prefs.groupOrder.map(groupId => renderGroup(GROUP_MAP.get(groupId))).join('')}</div>`;
-    const keywordInput = els.toolbar.querySelector('#keywordText'); if (keywordInput) keywordInput.value = state.keywordDraft;
-    const popupInput = els.toolbar.querySelector('#popupText'); if (popupInput) popupInput.value = state.popupDraft;
-    restoreScroll();
-    els.toolbar.querySelectorAll('.tool-btn').forEach(button => button.addEventListener('click', event => { if (state.sortMode) { if (event.target.closest('[data-mobile-move-kind]')) return; return; } triggerAction(button.dataset.actionId); }));
-    els.toolbar.querySelectorAll('[data-mobile-move-kind]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); rememberScroll(); const kind = button.dataset.mobileMoveKind; const id = button.dataset.mobileMoveId; const delta = Number(button.dataset.mobileMoveDelta || 0); if (kind === 'group') moveGroupByDelta(id, delta); if (kind === 'action') moveActionByDelta(id, delta); renderToolbar(); }));
-    els.toolbar.querySelector('#tbResetLayout')?.addEventListener('click', () => { state.prefs = clone(DEFAULT_PREFS); savePrefs(state.prefs); state.lastScrollTop = 0; renderToolbar(); });
-    els.toolbar.querySelector('#imageInput')?.addEventListener('change', handleImagePicker);
-    const scrollBox = getScrollBox(); scrollBox?.addEventListener('scroll', () => state.lastScrollTop = scrollBox.scrollTop, { passive: true });
-    wireDragHandlers(); syncMobileShell(); syncMobileNavShell(); syncActiveButtons();
-  }
-
   function wireDragHandlers() {
     if (isMobileLayout() || isTouchMode()) return;
     els.toolbar.querySelectorAll('[data-drag-handle="group"]').forEach(handle => {
@@ -3935,9 +3896,6 @@
       });
     });
   }
-
-  // モバイル選択バーのボタンは、選択解除を防ぐため pointer/mouse/touch をまとめて吸収する。
-  function bindTouchSelectionButton(button, handler) { if (!button) return;['pointerdown', 'mousedown', 'touchstart'].forEach(name => button.addEventListener(name, e => { e.preventDefault(); e.stopPropagation(); lockTouchSelectionUi(); }, { passive: false }));['pointerup', 'mouseup', 'touchend'].forEach(name => button.addEventListener(name, e => { e.preventDefault(); e.stopPropagation(); lockTouchSelectionUi(); handler(); }, { passive: false })); }
 
   // 画像はファイル選択・貼り付け・ドラッグ&ドロップの3経路で本文に挿入できる。
   function handleImagePicker(event) { const file = event.target.files?.[0]; if (!file) return; insertImageFile(file); event.target.value = ''; }
@@ -4280,116 +4238,6 @@
     }
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp, { once: true });
-  }
-
-  // 画面全体のイベント登録をここに集め、起動順を追いやすくしている。
-  function bindEvents() {
-    renderLessonSelect();
-    renderToolbar();
-    bindTouchSelectionButton(els.mobileSelectionApplyBtn, () => applyTouchSelection(true));
-    bindTouchSelectionButton(els.mobileSelectionCancelBtn, () => { window.getSelection()?.removeAllRanges(); hideMobileSelectionBar(); });
-
-    document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => setView(btn.dataset.view)));
-    document.querySelectorAll('[data-mobile-tool]').forEach(button => button.addEventListener('click', () => { const key = button.dataset.mobileTool || 'all'; if (state.mobileOpen && state.activeMobileTool === key) closeMobilePanel(); else openMobilePanel(key); }));
-    els.mobileToolBackdrop.addEventListener('click', closeMobilePanel); els.mobileToolCloseBtn.addEventListener('click', closeMobilePanel);
-    els.mobileNavOpenBtn.addEventListener('click', () => state.mobileNavOpen ? closeMobileNav() : openMobileNav());
-    els.mobileNavCloseBtn.addEventListener('click', closeMobileNav);
-
-    els.mobileNavDrawer.addEventListener('click', e => {
-      e.stopPropagation();
-    });
-
-    els.mobileNavDialog.addEventListener('click', () => {
-      closeMobileNav();
-    });
-
-    els.mobileNavDialog.addEventListener('cancel', e => {
-      e.preventDefault();
-      closeMobileNav();
-    });
-
-    els.mobileNavDialog.addEventListener('close', () => {
-      els.mobileNavDialog.classList.remove('is-open', 'is-closing');
-      if (state.mobileNavOpen) {
-        state.mobileNavOpen = false;
-        syncMobileNavShell();
-      }
-    });
-    els.courseSelect?.addEventListener('change', handleEditorCourseChange);
-    els.loadBtn.addEventListener('click', () => loadLessonById(els.lessonSelect.value));
-    els.saveBtn.addEventListener('click', saveCurrentMaterial);
-    els.savedSearchInput.addEventListener('input', renderSavedList); els.savedSortSelect.addEventListener('change', renderSavedList);
-    els.savedList.addEventListener('click', event => { const btn = event.target.closest('[data-saved-action]'); if (!btn) return; const id = btn.dataset.id; const action = btn.dataset.savedAction; if (action === 'open') openSavedItem(id); if (action === 'delete') deleteSavedItem(id); if (action === 'export') exportSavedItem(id); if (action === 'preview') previewSavedItem(id); });
-    els.lessonContainer.addEventListener('click', e => {
-      const btn = e.target.closest('.keyword-toggle');
-      if (btn) {
-        e.preventDefault();
-        e.stopPropagation();
-        const wrapper = btn.closest('.keyword-wrapper');
-        if (!wrapper) return;
-        const isSame = els.keywordPopover.dataset.owner && els.keywordPopover.dataset.owner === (wrapper.dataset.keywordId || '');
-        if (!els.keywordPopover.hidden && isSame) {
-          closeKeywordPopover();
-        } else {
-          openKeywordPopover(wrapper);
-        }
-        saveDraft();
-        return;
-      }
-
-      if (!isContainedIn(e.target, els.keywordPopover)) {
-        closeKeywordPopover();
-      }
-    });
-    els.lessonContainer.addEventListener('mouseup', e => { if (isTouchMode()) return; if (e.target.closest('.keyword-toggle')) return; if (!state.currentAction) return; const sel = window.getSelection(); if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return; applyCurrentActionToSelection(); sel.removeAllRanges(); });
-    els.lessonContainer.addEventListener('beforeinput', e => { if (e.inputType === 'historyUndo') { e.preventDefault(); if (state.__historyHotkeyLock) return; undo(); } if (e.inputType === 'historyRedo') { e.preventDefault(); if (state.__historyHotkeyLock) return; redo(); } }, { capture: true });
-    els.lessonContainer.addEventListener('input', () => { state.draftChangedAt = nowIso(); saveDraft(); markStudentAutoSaveDirty(); });
-    els.lessonContainer.addEventListener('paste', handleEditorPaste);
-    els.lessonContainer.addEventListener('dragover', e => e.preventDefault());
-    els.lessonContainer.addEventListener('drop', handleEditorDrop);
-    document.addEventListener('selectionchange', () => { if (!isTouchMode()) return; handleTouchSelectionChange(); });
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { closePreview(); clearCurrentAction(); closeMobilePanel(); closeMobileNav(); return; }
-      const ae = document.activeElement; const inEditor = (ae === els.lessonContainer) || els.lessonContainer.contains(ae);
-      if (!inEditor) return; const isCtrl = e.ctrlKey || e.metaKey; if (!isCtrl || e.repeat) return;
-      if (!e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); lockHistoryHotkey(); undo(); queueMicrotask(() => { state.__historyHotkeyLock = false; }); return; }
-      if ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || e.key === 'y' || e.key === 'Y') { e.preventDefault(); lockHistoryHotkey(); redo(); queueMicrotask(() => { state.__historyHotkeyLock = false; }); return; }
-    });
-    window.addEventListener('resize', () => { if (!isMobileLayout()) { state.mobileOpen = false; state.mobileNavOpen = false; } syncMobileShell(); syncMobileNavShell(); if (!els.keywordPopover.hidden) { const owner = els.keywordPopover.dataset.owner; const wrapper = owner ? els.lessonContainer.querySelector(`.keyword-wrapper[data-keyword-id="${owner}"]`) : null; if (wrapper) openKeywordPopover(wrapper); else closeKeywordPopover(); } });
-    document.addEventListener('scroll', () => {
-      if (els.keywordPopover.hidden) return;
-      const owner = els.keywordPopover.dataset.owner;
-      const wrapper = owner ? els.lessonContainer.querySelector(`.keyword-wrapper[data-keyword-id="${owner}"]`) : null;
-      if (wrapper) openKeywordPopover(wrapper);
-      else closeKeywordPopover();
-    }, true);
-    els.toolbarPrefsBtn.addEventListener('click', () => { captureDraftInputs(); state.sortMode = !state.sortMode; state.sortSelection = null; renderToolbar(); });
-    els.importJsonBtn.addEventListener('click', () => els.importJsonInput.click());
-    els.importJsonInput.addEventListener('change', async event => { const file = event.target.files?.[0]; if (!file) return; try { const text = await file.text(); const parsed = JSON.parse(text); const items = loadSaves(); const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed.saves) ? parsed.saves : [parsed]; const normalized = incoming.map(item => ({ id: item.id || `saved-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, baseLessonId: item.baseLessonId || item.base_lesson_id || SAMPLE_LESSONS[0].id, title: item.title || '取り込み教材', htmlContent: item.htmlContent || item.html_content || '', log: Array.isArray(item.log) ? item.log : [], createdAt: item.createdAt || item.created_at || nowIso(), updatedAt: item.updatedAt || item.updated_at || nowIso() })); saveSaves([...normalized, ...items]); renderSavedList(); showToast('JSON を取り込みました。'); } catch { showToast('JSON の取り込みに失敗しました。', 'error'); } finally { event.target.value = ''; } });
-    els.exportAllBtn.addEventListener('click', exportAll); els.mobileExportBtn.addEventListener('click', () => { exportAll(); closeMobileNav(); }); els.resetDemoBtn.addEventListener('click', resetDemo);
-    els.closePreviewBtn.addEventListener('click', closePreview); els.previewDialogBackdrop.addEventListener('click', e => { if (e.target === els.previewDialogBackdrop) closePreview(); });
-  }
-
-  // 起動時は下書き復元を優先し、なければサンプル教材を初期表示する。
-  function initFromDraft() {
-    const draft = loadDraft();
-    if (draft?.html) {
-      state.currentLessonId = draft.currentLessonId || SAMPLE_LESSONS[0].id;
-      state.baseLessonId = draft.baseLessonId || draft.currentLessonId || SAMPLE_LESSONS[0].id;
-      state.currentSavedId = draft.currentSavedId || null;
-      state.log = Array.isArray(draft.log) ? draft.log : [];
-      renderLessonSelect();
-      els.lessonSelect.value = state.baseLessonId;
-      els.lessonContainer.innerHTML = draft.html;
-      ensureResizableImages();
-      els.titleDisplay.textContent = draft.title || findLessonTitle(state.baseLessonId);
-      state.undoStack = [snapshot()]; state.redoStack = [];
-      syncEditorStatusTag();
-      showToast('前回のローカル状態を復元しました。');
-    } else {
-      renderLessonSelect();
-      loadLessonById(SAMPLE_LESSONS[0].id, { silent: true });
-    }
   }
 
   const CLEAN_ACTION_HINTS = {

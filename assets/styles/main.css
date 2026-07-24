@@ -1245,7 +1245,29 @@
     }
 
     .admin-toolbar--student-assignment {
-      grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.1fr) minmax(220px, auto) auto
+      grid-template-columns: minmax(360px, 1.15fr) minmax(320px, 1fr);
+      align-items: end
+    }
+
+    .admin-toolbar--student-assignment .admin-toolbar__metrics {
+      grid-column: 1 / span 1;
+      justify-content: flex-start
+    }
+
+    .admin-toolbar--student-assignment .admin-toolbar__actions {
+      grid-column: 2 / span 1;
+      justify-content: flex-end
+    }
+
+    .admin-toolbar--student-assignment label {
+      min-width: 0
+    }
+
+    .admin-toolbar--student-assignment .sa-select {
+      width: 100%;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis
     }
 
     .admin-toolbar label {

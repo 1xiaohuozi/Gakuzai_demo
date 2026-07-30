@@ -177,6 +177,26 @@ SQLite is configured with WAL mode to reduce read/write contention during classr
 
 SQLite は WAL モードを使用し、学生の書き込みと教師の読み取りが競合しにくいようにしています。
 
+### Core code locations / 核心実装箇所
+
+For interviews or code review, the concurrency-related implementation can be explained from these files:
+
+面接やコード説明では、以下の箇所を中心に説明できます。
+
+| Layer | File | Purpose |
+|---|---|---|
+| Frontend queue | [`assets/scripts/app.js`](assets/scripts/app.js#L52-L58) | Queue parameters for classroom-scale operation logging |
+| Frontend batch sender | [`assets/scripts/app.js`](assets/scripts/app.js#L2804-L2888) | Stores operation events in the browser and sends them in batches |
+| Backend batch API | [`server/routes/analytics.routes.js`](server/routes/analytics.routes.js#L334-L355) | Receives multiple operation events and writes them in one transaction |
+| SQLite settings | [`server/db.js`](server/db.js#L201-L209) | Enables busy timeout and WAL mode to reduce write contention |
+| Stress test script | [`stress-test.js`](stress-test.js) | Simulates 40 students sending operation events at the same time |
+
+The key idea is to reduce many small requests into fewer batch writes:
+
+```txt
+Student actions → Browser queue → Batch API → SQLite transaction → operation_events
+```
+
 ---
 
 ## Stress Test / 簡易負荷テスト
@@ -188,6 +208,18 @@ node stress-test.js
 ```
 
 Example result from a 40-student classroom simulation:
+
+| Metric | Result |
+|---|---:|
+| Simulated students | 40 |
+| Events per student | 20 |
+| Total operation events | 800 |
+| Batch requests | 40 |
+| Accepted events | 800 |
+| Inserted events | 800 |
+| Stored events | 800 |
+| Distinct students stored | 40 |
+| Execution time | 300 ms |
 
 ```json
 {

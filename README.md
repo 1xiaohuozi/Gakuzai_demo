@@ -1,162 +1,99 @@
 # GAKUZAI Demo
 
+[English](README.md) | [日本語](README.ja.md) | [中文](README.zh-CN.md)
+
+GAKUZAI Demo is a self-hosted classroom prototype for interactive teaching-material editing and learning-process analysis. It is designed for a teacher's PC to run as a local server in a classroom, while students access the system from browsers on laptops, smartphones, or tablets over the same Wi-Fi/LAN.
+
+The project focuses on a practical classroom problem: when many students edit digital teaching materials at the same time, the system should collect meaningful operation logs without turning every click into a separate database write.
+
 ![GAKUZAI system overview](docs/readme-system-overview.svg)
 
-**GAKUZAI Demo** は、授業中に学生が電子教材を自分の理解に合わせて加工し、その操作ログを教師が分析できるようにする小規模授業実験用システムです。  
-**GAKUZAI Demo** is a classroom-oriented prototype for interactive textbook editing, learning-log collection, and teacher-side analysis.
+## Screenshots
 
-本プロジェクトは、ローカル PC を教室内サーバーとして起動し、同じ Wi-Fi / LAN に接続した学生がブラウザから利用することを想定しています。
-
----
-
-## Actual Screenshots / 実際の画面
+| iPad / tablet view | Smartphone view | Smartphone view |
+|---|---|---|
+| ![iPad screenshot](assets/images/smartphone/ipad.png) | ![Smartphone screenshot 1](assets/images/smartphone/微信截图_20260731214700.png) | ![Smartphone screenshot 2](assets/images/smartphone/微信截图_20260731214737.png) |
 
 | Student course page | Student textbook editor |
 |---|---|
 | ![Student course page](docs/screenshots/student-courses.png) | ![Student textbook editor](docs/screenshots/student-editor.png) |
-| 学生が授業コードで参加し、公開教材を選択する画面 | 学生が教材を読み込み、自分の理解に合わせて加工する画面 |
 
-## Teaching Material / 教材素材
+## Interview Explanation Points
 
-| Digital logic material | Concurrent log saving |
-|---|---|
-| ![Majority circuit](assets/images/digital-logic/fig01.png) | ![Concurrency explanation](docs/concurrency-explanation-ja.svg) |
-| 教材例：真理値表とゲート素子 | 40人程度の同時利用を想定した保存設計 |
+This repository is especially suitable for explaining a small but complete full-stack system:
 
----
+- The frontend lets students read and edit teaching materials with highlighting, keyword hiding, popup notes, undo/redo, and autosave.
+- The backend provides authentication, course management, material management, assignments, analytics, and CSV export through Express APIs.
+- The database uses local SQLite, which keeps classroom deployment simple because the teacher does not need a cloud server.
+- The operation-log queue reduces high-concurrency pressure by batching many student actions before sending them to the backend.
+- The backend stores each batch inside a SQLite transaction and enables WAL mode to reduce read/write contention.
+- The stress test script simulates 40 students sending operation events concurrently.
 
-## Features / 主な機能
+## Core Features
 
-### Student side / 学生側
+### Student Side
 
-- 授業コードによる授業参加
-- 公開教材の閲覧と加工
-- マーカー、文字色、太字、下線、ポップアップ、キーワード化
-- 装飾解除
-- Ctrl/Cmd+Z による取り消し、Ctrl/Cmd+Shift+Z または Ctrl+Y によるやり直し
-- 自分の加工結果の保存・再開
-- スマートフォン / タブレット向けの操作 UI
+- Register and log in as a student.
+- Join a course with an invite code.
+- Open published teaching materials.
+- Edit materials according to personal understanding.
+- Use classroom-friendly editing tools:
+  - highlight markers
+  - text color
+  - bold and underline
+  - keyword hiding / replacement
+  - popup notes
+  - style clearing
+  - undo and redo
+- Save edited materials.
+- Submit assignment answers.
+- Use the system from smartphone, tablet, or desktop browsers.
 
-### Teacher side / 教師側
+### Teacher Side
 
-- 授業作成・教材管理
-- 教材の公開 / 下書き切り替え
-- 学生の保存状況確認
-- 操作ログの集計
-- CSV エクスポート
-- 学習行動の分析画面
+- Register and log in as a teacher.
+- Create and manage courses.
+- Publish or unpublish teaching materials.
+- Create assignments based on course materials.
+- Check student participation and saved work.
+- Analyze student operation logs by course, material, student, block, and action type.
+- Export operation logs as CSV for further analysis.
 
-### System side / システム側
+### System Side
 
-- Node.js + Express backend
-- SQLite local database
-- JWT authentication
-- Operation-event queueing and batch insert
-- SQLite WAL mode for classroom-scale concurrent access
-- Local LAN deployment without cloud dependency
+- Local classroom deployment with Node.js and Express.
+- SQLite database stored inside the project directory.
+- JWT-based API authentication.
+- Password hashing with bcryptjs.
+- API protection with helmet and express-rate-limit.
+- Browser-side operation queue with localStorage persistence.
+- Batch operation-log API and transaction-based database writes.
+- SQLite busy timeout and WAL mode.
 
----
+## High-Concurrency Queue Design
 
-## Quick Start / 起動方法
+The important design idea is to avoid sending every student operation as an independent request.
 
-### 1. Install dependencies / 依存関係のインストール
-
-```bash
-npm install
+```text
+Student operation
+  -> browser-side queue
+  -> batch request
+  -> Express API
+  -> SQLite transaction
+  -> operation_events table
 ```
 
-### 2. Start server / サーバー起動
+### Why the Queue Exists
 
-```bash
-npm start
-```
+In a classroom, students often perform many small actions at nearly the same time: marking words, hiding keywords, adding notes, saving work, switching materials, or editing the same paragraph repeatedly.
 
-Default URL:
+If 40 students each perform 20 editing operations and every operation is sent immediately, the backend may receive around 800 small requests. For a local SQLite-based classroom server, that can create unnecessary HTTP overhead and frequent write-lock contention.
 
-```txt
-http://localhost:3000/
-```
+This project reduces that pressure by collecting operation events in the browser first, then sending them as batches.
 
-For classroom LAN testing, open the server PC's local IP address from student devices:
+### Frontend Queue
 
-```txt
-http://<YOUR_LOCAL_IP>:3000/
-```
-
-例:
-
-```txt
-http://192.168.xx.xx:3000/
-```
-
-> Do not hard-code the classroom IP address in this repository.  
-> 教室で使う IP アドレスは、当日のネットワーク環境に合わせて案内してください。
-
----
-
-## Classroom Test Flow / 授業内テストの流れ
-
-1. 教師 PC を学校 Wi-Fi / LAN に接続する。
-2. 教師 PC で `npm start` を実行する。
-3. 学生にアクセス URL と授業コードを配布する。
-4. 学生はブラウザからアクセスし、登録またはログインする。
-5. 学生は授業コードを入力して授業に参加する。
-6. 公開教材を開き、自分の理解に合わせて教材を加工する。
-7. 学生は作業終了前に保存する。
-8. 教師は保存状況と操作ログを確認する。
-
-Current demo course code:
-
-```txt
-DIGI2026
-```
-
-Current demo material:
-
-```txt
-デジタル回路：真理値表とゲート素子
-```
-
----
-
-## Student Editing Tools / 学生が使う加工ツール
-
-| Tool | Japanese label | Purpose |
-|---|---|---|
-| Highlight | マーカー：黄 / 緑 / ピンク | 重要な語句や説明を目立たせる |
-| Text color | 文字色：青 / 赤 | 意味や注意点を色で分類する |
-| Emphasis | 強調：太字 / 下線 | 特に重要な部分を強調する |
-| Keyword hiding | 非表示・キーワード化 | 語句を隠す、または短い記号に置き換える |
-| Popup note | ポップアップ追加 | 補足説明や自分のメモを追加する |
-| Clear style | 装飾解除 | 選択範囲の装飾を元に戻す |
-| Save | 保存 | 加工結果を保存する |
-
-### Keyboard shortcuts / ショートカット
-
-| Shortcut | Action |
-|---|---|
-| `Esc` | 加工モード解除 |
-| `Ctrl + Z` / `Cmd + Z` | 元に戻す |
-| `Ctrl + Shift + Z` / `Cmd + Shift + Z` | やり直し |
-| `Ctrl + Y` | やり直し |
-
----
-
-## Concurrency Design / 同時利用への対応
-
-This project is designed for small classroom tests, such as around 40 students editing materials at the same time.
-
-本システムは、40人程度の授業内同時利用を想定し、以下の仕組みでサーバー負荷とデータ欠損リスクを下げています。
-
-![Concurrency design](docs/concurrency-explanation-ja.svg)
-
-### Frontend queue / フロントエンド側キュー
-
-Student operations are not sent one by one immediately. They are temporarily stored in a browser-side queue and sent in batches.
-
-学生の操作ログは毎回すぐサーバーへ送信せず、ブラウザ側キューに一時保存してからまとめて送信します。
-
-Key constants:
+The queue configuration is defined in `assets/scripts/app.js`:
 
 ```js
 const OPERATION_QUEUE_BATCH_SIZE = 20;
@@ -165,175 +102,174 @@ const OPERATION_QUEUE_MAX_RETRY_DELAY_MS = 30000;
 const OPERATION_QUEUE_MAX_ITEMS = 1000;
 ```
 
-### Backend batch API / バックエンド側一括保存
+Implementation points:
 
-The backend receives operation events through a batch endpoint and writes them in a database transaction.
+- Each operation has a `clientEventId` to avoid duplicate queue entries.
+- Events are first stored in `state.operationQueue`.
+- The queue is also persisted in `localStorage`, so temporary refreshes or network interruptions do not immediately lose unsent logs.
+- The system waits briefly before flushing, which combines continuous operations into fewer requests.
+- A browser only sends one batch at a time through `operationQueueInFlight`.
+- Failed sends keep the queue intact and use exponential backoff up to 30 seconds.
+- When the page becomes hidden or is about to unload, the client attempts a smaller `keepalive` send.
 
-バックエンドでは複数の操作ログを一括受信し、トランザクションでまとめて保存します。
+Key code locations:
 
-### SQLite WAL mode / SQLite WAL モード
+| Part | File |
+|---|---|
+| Queue constants | `assets/scripts/app.js` |
+| Queue enqueue logic | `assets/scripts/app.js` |
+| Batch flush and retry | `assets/scripts/app.js` |
+| Page-hide / unload protection | `assets/scripts/app.js` |
 
-SQLite is configured with WAL mode to reduce read/write contention during classroom use.
+### Backend Batch Write
 
-SQLite は WAL モードを使用し、学生の書き込みと教師の読み取りが競合しにくいようにしています。
+The backend receives multiple events through:
 
-### Core code locations / 核心実装箇所
-
-For interviews or code review, the concurrency-related implementation can be explained from these files:
-
-面接やコード説明では、以下の箇所を中心に説明できます。
-
-| Layer | File | Purpose |
-|---|---|---|
-| Frontend queue | [`assets/scripts/app.js`](assets/scripts/app.js#L52-L58) | Queue parameters for classroom-scale operation logging |
-| Frontend batch sender | [`assets/scripts/app.js`](assets/scripts/app.js#L2804-L2888) | Stores operation events in the browser and sends them in batches |
-| Backend batch API | [`server/routes/analytics.routes.js`](server/routes/analytics.routes.js#L334-L355) | Receives multiple operation events and writes them in one transaction |
-| SQLite settings | [`server/db.js`](server/db.js#L201-L209) | Enables busy timeout and WAL mode to reduce write contention |
-| Stress test script | [`stress-test.js`](stress-test.js) | Simulates 40 students sending operation events at the same time |
-
-The key idea is to reduce many small requests into fewer batch writes:
-
-```txt
-Student actions → Browser queue → Batch API → SQLite transaction → operation_events
+```text
+POST /api/analytics/operation-events/batch
 ```
 
----
+The route accepts up to 50 events in one request and writes the batch inside a database transaction:
 
-## Stress Test / 簡易負荷テスト
+```js
+const writeBatch = db.transaction(() => events.map(event => (
+  insertOperationEventForUser(req.user, event, materialCache)
+)));
+```
 
-The repository includes a stress test script:
+This means the system reduces database write overhead from many tiny writes to fewer grouped writes.
+
+### SQLite Contention Reduction
+
+SQLite is used because this demo is intended for local classroom deployment, not large public production traffic. To make SQLite more stable under classroom-scale concurrent access, the database initialization includes:
+
+```js
+db = new Database(dbPath, { timeout: 15000 });
+db.pragma('busy_timeout = 15000');
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+```
+
+The important interview explanation:
+
+- `busy_timeout` gives SQLite time to wait instead of failing immediately when the database is temporarily locked.
+- WAL mode helps reduce read/write blocking compared with the default rollback journal mode.
+- Batch writes reduce the number of times the database needs to enter a write transaction.
+- `clientEventId` and duplicate-safe insertion make retry safer when network conditions are unstable.
+
+![Concurrency design](docs/concurrency-explanation-ja.svg)
+
+## Stress Test
+
+The repository includes `stress-test.js`, which creates a temporary teacher, course, material, and 40 test students, then sends 20 operation events per student to the batch API.
 
 ```bash
 node stress-test.js
 ```
 
-Example result from a 40-student classroom simulation:
+The script reports:
 
-| Metric | Result |
-|---|---:|
-| Simulated students | 40 |
-| Events per student | 20 |
-| Total operation events | 800 |
-| Batch requests | 40 |
-| Accepted events | 800 |
-| Inserted events | 800 |
-| Stored events | 800 |
-| Distinct students stored | 40 |
-| Execution time | 300 ms |
+- number of batch requests
+- accepted operation events
+- inserted operation events
+- stored operation events
+- distinct students stored
+- execution time
 
-```json
-{
-  "requests": 40,
-  "accepted": 800,
-  "inserted": 800,
-  "stored": 800,
-  "students": 40,
-  "ms": 300
-}
+This is useful in interviews because it connects the design claim to a reproducible script:
+
+```text
+40 students x 20 events = 800 operation events
+800 individual writes -> reduced into around 40 batch requests
 ```
 
-This means that 800 operation events were accepted, inserted, and stored successfully in the local SQLite database during the test.
+## Tech Stack
 
----
+| Layer | Technology |
+|---|---|
+| Frontend | HTML, CSS, vanilla JavaScript |
+| Backend | Node.js, Express |
+| Database | SQLite with better-sqlite3 |
+| Authentication | JWT, bcryptjs |
+| API protection | helmet, express-rate-limit |
+| Data export | CSV export endpoint |
+| Deployment model | Self-hosted local classroom server |
 
-## Database / データベース
+## Project Structure
 
-The main database is stored inside the project:
-
-```txt
-server/data/gakuzai.sqlite
-```
-
-Related SQLite WAL files may appear during runtime:
-
-```txt
-server/data/gakuzai.sqlite-wal
-server/data/gakuzai.sqlite-shm
-```
-
-These files are normal when SQLite WAL mode is enabled.
-
-### Important note / 注意
-
-Do not run multiple business servers with different ports unless you know which database each server is using.
-
-複数のサーバーを同時に起動すると、「どの画面がどのデータベースを見ているのか」が分かりにくくなります。授業テスト時は、基本的に 1 つのサーバーだけを起動してください。
-
----
-
-## Project Structure / ディレクトリ構成
-
-```txt
+```text
 Gakuzai_demo/
-├─ app.html                         # Main web application
-├─ index.html                       # Entry page
+├─ index.html
+├─ app.html
 ├─ assets/
+│  ├─ images/
+│  │  ├─ smartphone/
+│  │  └─ digital-logic/
 │  ├─ scripts/
-│  │  ├─ app.js                     # Frontend application logic
-│  │  └─ sample-lessons.js          # Built-in base material list
-│  ├─ styles/
-│  │  └─ main.css                   # Application styles
-│  └─ images/                       # Material images
+│  │  ├─ app.js
+│  │  ├─ auth-page.js
+│  │  └─ sample-lessons.js
+│  └─ styles/
 ├─ server/
-│  ├─ app.js                        # Express server
-│  ├─ db.js                         # SQLite initialization and WAL settings
-│  ├─ schema.sql                    # Database schema
-│  └─ routes/                       # API routes
+│  ├─ app.js
+│  ├─ db.js
+│  ├─ schema.sql
+│  └─ routes/
 ├─ scripts/
-│  ├─ import-digital-logic-material.js
-│  └─ create_student_test_guide_docx.py
 ├─ docs/
-│  ├─ concurrency-explanation-ja.svg
-│  └─ readme-system-overview.svg
 └─ stress-test.js
 ```
 
----
+## Quick Start
 
-## Useful Commands / よく使うコマンド
+### 1. Install dependencies
 
-### Start application
+```bash
+npm install
+```
+
+### 2. Start the server
 
 ```bash
 npm start
 ```
 
-### Use another port
+Default URL:
 
-```bash
-set PORT=3988
-npm start
+```text
+http://localhost:3000/
 ```
 
-PowerShell:
+For classroom LAN testing, open the teacher PC's local IP address from student devices:
+
+```text
+http://<YOUR_LOCAL_IP>:3000/
+```
+
+Example:
+
+```text
+http://192.168.xx.xx:3000/
+```
+
+## Useful Commands
+
+```bash
+npm start
+node stress-test.js
+node scripts/import-digital-logic-material.js
+node --check assets/scripts/app.js
+node --check server/app.js
+```
+
+PowerShell example for changing the port:
 
 ```powershell
 $env:PORT="3988"
 npm start
 ```
 
-### Re-import digital logic material
-
-```bash
-node scripts/import-digital-logic-material.js
-```
-
-### Run stress test
-
-```bash
-node stress-test.js
-```
-
-### Syntax check
-
-```bash
-node --check assets/scripts/app.js
-node --check server/app.js
-```
-
----
-
-## Environment Variables / 環境変数
+## Environment Variables
 
 See `.env.example`.
 
@@ -343,26 +279,36 @@ See `.env.example`.
 | `GAKUZAI_DATA_DIR` | `server/data` | Database directory |
 | `GAKUZAI_DB_PATH` | `server/data/gakuzai.sqlite` | Explicit database path |
 | `JSON_BODY_LIMIT` | `25mb` | JSON request body limit |
-| `API_RATE_LIMIT` | `2000` | API rate limit per window |
+| `API_RATE_LIMIT` | `2000` | API rate limit per 15-minute window |
 
----
+## Database Notes
 
-## Limitations / 現在の想定範囲
+The main database is generated at runtime:
 
-This demo is suitable for small classroom experiments, not for a large public production service.
+```text
+server/data/gakuzai.sqlite
+```
 
-このプロジェクトは小規模な授業実験向けです。長期運用や大規模公開サービスとして利用する場合は、以下の強化が必要です。
+When WAL mode is active, SQLite may also create:
 
-- PostgreSQL / MySQL などの本番向け DB
-- HTTPS and domain setup
-- Server process manager
-- Automated backups
-- Role and permission hardening
-- Centralized logging and monitoring
+```text
+server/data/gakuzai.sqlite-wal
+server/data/gakuzai.sqlite-shm
+```
 
----
+These files are normal runtime artifacts and should not be committed.
 
-## License / ライセンス
+## Limitations and Future Improvements
 
-This repository is currently marked as private in `package.json`.  
-ライセンスを公開する場合は、用途に合わせて `LICENSE` ファイルを追加してください。   
+This demo is suitable for local classroom experiments. For large-scale public production deployment, the following improvements would be needed:
+
+- move from SQLite to PostgreSQL or MySQL
+- add HTTPS and domain configuration
+- add process management and monitoring
+- add automated backups
+- strengthen role and permission management
+- centralize logs and operational metrics
+
+## License
+
+No license file is currently included. Add a `LICENSE` file before redistributing or reusing the project outside its current demo context.

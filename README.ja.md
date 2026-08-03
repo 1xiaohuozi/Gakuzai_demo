@@ -18,7 +18,7 @@ GAKUZAI Demo は、授業中に学生が電子教材を自分の理解に合わ�
 |---|---|
 | ![Student course page](docs/screenshots/student-courses.png) | ![Student textbook editor](docs/screenshots/student-editor.png) |
 
-## 面接で説明しやすいポイント
+## ポイント
 
 このリポジトリは、小規模ながらフルスタックの設計を説明しやすい構成になっています。
 
